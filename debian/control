@@ -28,18 +28,14 @@ Build-Depends: cmake,
                xserver-xorg-input-synaptics-dev,
                libxtst-dev,
                libsm-dev,
-               libpolkit-qt5-1-dev,
+               libpolkit-qt6-1-dev,
                libpolkit-agent-1-dev,
-               libkf5windowsystem-dev,
-               libkf5globalaccel-dev,
-               libkf5coreaddons-dev,
-               libkf5idletime-dev,
-               libqt5x11extras5-dev,
-               qtbase5-dev,
-               qtdeclarative5-dev,
-               qtquickcontrols2-5-dev,
-               qttools5-dev,
-               qttools5-dev-tools
+               libkf6windowsystem-dev,
+               libkf6globalaccel-dev,
+               libkf6coreaddons-dev,
+               libkf6idletime-dev,
+               qt6-base-dev,
+               qt6-declarative-dev
 Standards-Version: 4.5.0
 Homepage: https://github.com/cutefishos/core
 

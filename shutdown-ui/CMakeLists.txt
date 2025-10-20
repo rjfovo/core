@@ -7,15 +7,25 @@ add_executable(cutefish-shutdown
 )
 
 target_link_libraries(cutefish-shutdown
-        Qt5::Core
-        Qt5::Widgets
-        Qt5::Quick
-        Qt5::QuickControls2
-        Qt5::DBus
+        Qt6::Core
+        Qt6::Widgets
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::DBus
 )
 
 file(GLOB TS_FILES translations/*.ts)
-qt5_create_translation(QM_FILES ${TS_FILES})
+# 修复 qt_add_lupdate 调用 - 添加必要的 SOURCE_TARGETS 参数
+qt_add_lupdate(
+    SOURCE_TARGETS cutefish-shutdown  # 明确指定源目标
+    TS_FILES ${TS_FILES}
+)
+
+qt_add_lrelease(
+    cutefish-shutdown  # 目标名称
+    QM_FILES ${TS_FILES}
+)
+
 add_custom_target(shutdown-translations DEPENDS ${QM_FILES} SOURCES ${TS_FILES})
 add_dependencies(cutefish-shutdown shutdown-translations)
 install(FILES ${QM_FILES} DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/cutefish-shutdown/translations)

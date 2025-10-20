@@ -33,9 +33,20 @@
 #include <QDBusInterface>
 #include <QDBusPendingCall>
 
-#include <QX11Info>
-#include <KWindowSystem>
+// KF6 兼容性处理
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <KF6/KWindowSystem/NETWM>
+#else
 #include <KWindowSystem/NETWM>
+#endif
+
+// Qt6 兼容性处理
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+#include <QX11Info>
+#else
+#include <QGuiApplication>
+#include <qpa/qplatformnativeinterface.h>
+#endif
 
 ProcessManager::ProcessManager(Application *app, QObject *parent)
     : QObject(parent)
@@ -224,7 +235,7 @@ void ProcessManager::loadAutoStartProcess()
     }
 }
 
-bool ProcessManager::nativeEventFilter(const QByteArray &eventType, void *message, long *result)
+bool ProcessManager::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
 {
     if (eventType != "xcb_generic_event_t") // We only want to handle XCB events
         return false;
@@ -232,13 +243,29 @@ bool ProcessManager::nativeEventFilter(const QByteArray &eventType, void *messag
     // ref: lxqt session
     if (!m_wmStarted && m_waitLoop) {
         // all window managers must set their name according to the spec
-        if (!QString::fromUtf8(NETRootInfo(QX11Info::connection(), NET::SupportingWMCheck).wmName()).isEmpty()) {
-            qDebug() << "Window manager started";
-            m_wmStarted = true;
-            if (m_waitLoop && m_waitLoop->isRunning())
-                m_waitLoop->exit();
+        
+        // Qt5/Qt6 兼容性处理
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+        xcb_connection_t *connection = QX11Info::connection();
+#else
+        xcb_connection_t *connection = nullptr;
+        if (qApp->platformName() == "xcb") {
+            QPlatformNativeInterface *native = qApp->platformNativeInterface();
+            if (native) {
+                connection = static_cast<xcb_connection_t*>(native->nativeResourceForWindow("connection", nullptr));
+            }
+        }
+#endif
 
-            qApp->removeNativeEventFilter(this);
+        if (connection) {
+            if (!QString::fromUtf8(NETRootInfo(connection, NET::SupportingWMCheck).wmName()).isEmpty()) {
+                qDebug() << "Window manager started";
+                m_wmStarted = true;
+                if (m_waitLoop && m_waitLoop->isRunning())
+                    m_waitLoop->exit();
+
+                qApp->removeNativeEventFilter(this);
+            }
         }
     }
 
