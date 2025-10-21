@@ -1,5 +1,4 @@
 #include <QGuiApplication>
-#include <QX11Info>
 #include <QFile>
 #include <QDebug>
 #include <QSettings>
@@ -8,12 +7,30 @@
 #include <X11/X.h>
 #include <X11/Xcursor/Xcursor.h>
 
+// 注意：在Qt6中，我们使用 QNativeInterface::QX11Application 来获取X11连接
+#include <qpa/qplatformnativeinterface.h>
+
 inline void applyTheme(const QString &theme, int size)
 {
-    Display *display = QX11Info::display();
+    // Qt6 方式获取 Display
+    Display *display = nullptr;
+    
+    // 检查是否在X11平台运行
+    if (qApp->platformName() == "xcb") {
+        QPlatformNativeInterface *native = qApp->platformNativeInterface();
+        if (native) {
+            display = static_cast<Display*>(
+                native->nativeResourceForWindow("display", nullptr));
+        }
+    }
+
+    if (!display) {
+        qWarning() << "Unable to get X11 display";
+        return;
+    }
 
     if (!theme.isEmpty())
-        XcursorSetTheme(display, QFile::encodeName(theme));
+        XcursorSetTheme(display, QFile::encodeName(theme).constData());
 
     if (size > 0)
         XcursorSetDefaultSize(display, size);
@@ -41,7 +58,8 @@ int main(int argc, char *argv[])
     if (argc != 3)
         return 1;
 
-    if (!QX11Info::isPlatformX11())
+    // Qt6 方式检查平台
+    if (a.platformName() != "xcb")
         return 2;
 
     QString theme = QFile::decodeName(argv[1]);

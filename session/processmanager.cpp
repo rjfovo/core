@@ -48,6 +48,11 @@
 #include <qpa/qplatformnativeinterface.h>
 #endif
 
+extern "C" {
+    #include <xcb/xcb.h>
+    #include <xcb/xcb_ewmh.h>
+}
+
 ProcessManager::ProcessManager(Application *app, QObject *parent)
     : QObject(parent)
     , m_app(app)
@@ -203,7 +208,6 @@ void ProcessManager::loadAutoStartProcess()
         const QStringList fileNames = d.entryList(QStringList() << QStringLiteral("*.desktop"));
         for (const QString &file : fileNames) {
             QSettings desktop(d.absoluteFilePath(file), QSettings::IniFormat);
-            desktop.setIniCodec("UTF-8");
             desktop.beginGroup("Desktop Entry");
 
             if (desktop.contains("OnlyShowIn"))
@@ -237,34 +241,48 @@ void ProcessManager::loadAutoStartProcess()
 
 bool ProcessManager::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
 {
-    if (eventType != "xcb_generic_event_t") // We only want to handle XCB events
+    if (eventType != "xcb_generic_event_t")
         return false;
 
-    // ref: lxqt session
     if (!m_wmStarted && m_waitLoop) {
-        // all window managers must set their name according to the spec
-        
-        // Qt5/Qt6 兼容性处理
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-        xcb_connection_t *connection = QX11Info::connection();
-#else
         xcb_connection_t *connection = nullptr;
+        
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+        connection = QX11Info::connection();
+#else
         if (qApp->platformName() == "xcb") {
             QPlatformNativeInterface *native = qApp->platformNativeInterface();
             if (native) {
-                connection = static_cast<xcb_connection_t*>(native->nativeResourceForWindow("connection", nullptr));
+                connection = static_cast<xcb_connection_t*>(
+                    native->nativeResourceForWindow("connection", nullptr));
             }
         }
 #endif
 
         if (connection) {
-            if (!QString::fromUtf8(NETRootInfo(connection, NET::SupportingWMCheck).wmName()).isEmpty()) {
-                qDebug() << "Window manager started";
-                m_wmStarted = true;
-                if (m_waitLoop && m_waitLoop->isRunning())
-                    m_waitLoop->exit();
-
-                qApp->removeNativeEventFilter(this);
+            xcb_ewmh_connection_t ewmh_conn;
+            if (xcb_ewmh_init_atoms_replies(&ewmh_conn, 
+                xcb_ewmh_init_atoms(connection, &ewmh_conn), nullptr)) {
+                
+                // 获取默认屏幕
+                const xcb_setup_t *setup = xcb_get_setup(connection);
+                xcb_screen_t *screen = xcb_setup_roots_iterator(setup).data;
+                
+                if (screen) {
+                    // 方法1：检查 _NET_SUPPORTING_WM_CHECK 属性
+                    xcb_get_property_cookie_t cookie = xcb_ewmh_get_supporting_wm_check(
+                        &ewmh_conn, screen->root);
+                    xcb_window_t wm_window;
+                    if (xcb_ewmh_get_supporting_wm_check_reply(&ewmh_conn, cookie, &wm_window, nullptr)) {
+                        qDebug() << "Window manager started, WM window:" << wm_window;
+                        m_wmStarted = true;
+                        if (m_waitLoop && m_waitLoop->isRunning())
+                            m_waitLoop->exit();
+                        qApp->removeNativeEventFilter(this);
+                    }
+                }
+                
+                xcb_ewmh_connection_wipe(&ewmh_conn);
             }
         }
     }
