@@ -9,11 +9,10 @@
 
 #include <QObject>
 #include <QString>
-#include <QX11Info>
-
-#include <X11/Xdefs.h>
 
 struct LibinputSettings;
+typedef struct _XDisplay Display;
+typedef unsigned long Atom;  // Atom 实际上是 unsigned long
 
 class X11LibinputDummyDevice : public QObject
 {
@@ -292,6 +291,7 @@ private:
 
     LibinputSettings *m_settings;
     Display *m_dpy = nullptr;
+    bool m_ownsDisplay = false;
 };
 
 #endif // X11LIBINPUTDUMMYDEVICE_H

@@ -8,6 +8,8 @@
 #include <QDebug>
 #include <libinput-properties.h>
 
+#include <X11/Xlib.h>
+#include <X11/Xdefs.h>
 #include <X11/Xatom.h>
 #include <X11/extensions/XInput.h>
 #include <X11/extensions/XInput2.h>
@@ -129,8 +131,12 @@ void valueWriterPart<qreal>(qreal val, Atom valAtom, Display *dpy)
 X11LibinputDummyDevice::X11LibinputDummyDevice(QObject *parent, Display *dpy)
     : QObject(parent)
     , m_settings(new LibinputSettings())
-    , m_dpy(dpy)
 {
+
+    // Qt6 中我们自己打开连接
+    m_dpy = XOpenDisplay(nullptr);
+    m_ownsDisplay = (m_dpy != nullptr);
+
     m_leftHanded.atom = XInternAtom(dpy, LIBINPUT_PROP_LEFT_HANDED, True);
     m_middleEmulation.atom = XInternAtom(dpy, LIBINPUT_PROP_MIDDLE_EMULATION_ENABLED, True);
     m_naturalScroll.atom = XInternAtom(dpy, LIBINPUT_PROP_NATURAL_SCROLL, True);
@@ -165,6 +171,10 @@ X11LibinputDummyDevice::X11LibinputDummyDevice(QObject *parent, Display *dpy)
 
 X11LibinputDummyDevice::~X11LibinputDummyDevice()
 {
+    if (m_ownsDisplay && m_dpy) {
+        XCloseDisplay(m_dpy);
+    }
+
     delete m_settings;
 }
 
