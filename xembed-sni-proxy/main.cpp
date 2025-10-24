@@ -13,6 +13,7 @@
 #include "debug.h"
 #include "snidbus.h"
 #include "xcbutils.h"
+#include "xcb_connection.h"
 
 #include <QDBusMetaType>
 

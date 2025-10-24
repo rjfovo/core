@@ -13,6 +13,8 @@
 #include <xcb/record.h>
 #include <xcb/xcb.h>
 
+typedef struct _XDisplay Display;
+
 class XRecordKeyboardMonitor : public QObject
 {
     Q_OBJECT

@@ -18,7 +18,6 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QTimer>
-#include <QX11Info>
 
 #include <QBitmap>
 
@@ -27,6 +26,9 @@
 
 #include "statusnotifieritemadaptor.h"
 #include "statusnotifierwatcher_interface.h"
+
+#include "xcb_connection.h"
+#include "xcbutils.h"
 
 #include "xtestsender.h"
 
@@ -42,8 +44,14 @@ int SNIProxy::s_serviceCount = 0;
 
 void xembed_message_send(xcb_window_t towin, long message, long d1, long d2, long d3)
 {
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) 
+        return;
+    
+    auto c = xcbConn.connection();
+    
     xcb_client_message_event_t ev;
-
+    memset(&ev, 0, sizeof(ev));
     ev.response_type = XCB_CLIENT_MESSAGE;
     ev.window = towin;
     ev.format = 32;
@@ -53,7 +61,9 @@ void xembed_message_send(xcb_window_t towin, long message, long d1, long d2, lon
     ev.data.data32[3] = d2;
     ev.data.data32[4] = d3;
     ev.type = Xcb::atoms->xembedAtom;
-    xcb_send_event(QX11Info::connection(), false, towin, XCB_EVENT_MASK_NO_EVENT, (char *)&ev);
+    
+    xcb_send_event(c, false, towin, XCB_EVENT_MASK_NO_EVENT, (char *)&ev);
+    xcb_flush(c);
 }
 
 SNIProxy::SNIProxy(xcb_window_t wid, QObject *parent)
@@ -79,7 +89,10 @@ SNIProxy::SNIProxy(xcb_window_t wid, QObject *parent)
         qCWarning(SNIPROXY) << "could not register SNI:" << reply.error().message();
     }
 
-    auto c = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) return;
+    
+    auto c = xcbConn.connection();
 
     // create a container window
     auto screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
@@ -178,7 +191,10 @@ SNIProxy::SNIProxy(xcb_window_t wid, QObject *parent)
 
 SNIProxy::~SNIProxy()
 {
-    auto c = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) return;
+    
+    auto c = xcbConn.connection();
 
     xcb_destroy_window(c, m_containerWid);
     QDBusConnection::disconnectFromBus(m_dbus.name());
@@ -206,7 +222,10 @@ void SNIProxy::update()
 
 void SNIProxy::resizeWindow(const uint16_t width, const uint16_t height) const
 {
-    auto connection = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) return;
+    
+    auto connection = xcbConn.connection();
 
     uint16_t widthNormalized = std::min(width, s_embedSize);
     uint16_t heighNormalized = std::min(height, s_embedSize);
@@ -227,7 +246,10 @@ void SNIProxy::hideContainerWindow(xcb_window_t windowId) const
 
 QSize SNIProxy::calculateClientWindowSize() const
 {
-    auto c = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) 
+        return QSize();
+    auto c = xcbConn.connection();
 
     auto cookie = xcb_get_geometry(c, m_windowId);
     QScopedPointer<xcb_get_geometry_reply_t, QScopedPointerPodDeleter> clientGeom(xcb_get_geometry_reply(c, cookie, nullptr));
@@ -281,7 +303,11 @@ bool SNIProxy::isTransparentImage(const QImage &image) const
 
 QImage SNIProxy::getImageNonComposite() const
 {
-    auto c = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) 
+        return QImage();
+    
+    auto c = xcbConn.connection();
 
     QSize clientWindowSize = calculateClientWindowSize();
 
@@ -356,7 +382,7 @@ QImage SNIProxy::convertFromNative(xcb_image_t *xcbImage) const
 
     if (format == QImage::Format_RGB32 && xcbImage->bpp == 32) {
         QImage m = image.createHeuristicMask();
-        QBitmap mask(QPixmap::fromImage(m));
+        QBitmap mask = QBitmap::fromPixmap(QPixmap::fromImage(m));
         QPixmap p = QPixmap::fromImage(image);
         p.setMask(mask);
         image = p.toImage();
@@ -380,7 +406,11 @@ QPoint SNIProxy::calculateClickPoint() const
 {
     QPoint clickPoint = QPoint(0, 0);
 
-    auto c = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) 
+        return QPoint();
+    
+    auto c = xcbConn.connection();
 
     // request extent to check if shape has been set
     xcb_shape_query_extents_cookie_t extentsCookie = xcb_shape_query_extents(c, m_windowId);
@@ -417,7 +447,11 @@ QPoint SNIProxy::calculateClickPoint() const
 
 void SNIProxy::stackContainerWindow(const uint32_t stackMode) const
 {
-    auto c = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) 
+        return;
+    auto c = xcbConn.connection();
+
     const uint32_t stackData[] = {stackMode};
     xcb_configure_window(c, m_containerWid, XCB_CONFIG_WINDOW_STACK_MODE, stackData);
 }
@@ -450,15 +484,40 @@ bool SNIProxy::ItemIsMenu() const
     return false;
 }
 
-QString SNIProxy::Status() const
-{
-    return QStringLiteral("Active");
-}
-
 QString SNIProxy::Title() const
 {
-    KWindowInfo window(m_windowId, NET::WMName);
-    return window.name();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) 
+        return QString();
+    auto c = xcbConn.connection();
+    if (!c) 
+        return QString::number(m_windowId);
+    
+    // 尝试获取 _NET_WM_NAME (UTF-8)
+    xcb_get_property_cookie_t utf8_cookie = xcb_get_property(
+        c, 0, m_windowId, Xcb::atoms->netWmNameAtom, Xcb::atoms->utf8StringAtom, 0, 1024);
+    
+    // 同时尝试获取 WM_NAME (legacy)
+    xcb_get_property_cookie_t legacy_cookie = xcb_get_property(
+        c, 0, m_windowId, Xcb::atoms->wmNameAtom, XCB_ATOM_STRING, 0, 1024);
+    
+    QScopedPointer<xcb_get_property_reply_t, QScopedPointerPodDeleter> utf8_reply(
+        xcb_get_property_reply(c, utf8_cookie, nullptr));
+    
+    if (utf8_reply && utf8_reply->format == 8 && utf8_reply->value_len > 0) {
+        const char* data = reinterpret_cast<const char*>(xcb_get_property_value(utf8_reply.data()));
+        return QString::fromUtf8(data, xcb_get_property_value_length(utf8_reply.data()));
+    }
+    
+    QScopedPointer<xcb_get_property_reply_t, QScopedPointerPodDeleter> legacy_reply(
+        xcb_get_property_reply(c, legacy_cookie, nullptr));
+    
+    if (legacy_reply && legacy_reply->format == 8 && legacy_reply->value_len > 0) {
+        const char* data = reinterpret_cast<const char*>(xcb_get_property_value(legacy_reply.data()));
+        return QString::fromLocal8Bit(data, xcb_get_property_value_length(legacy_reply.data()));
+    }
+    
+    return QString::number(m_windowId);
 }
 
 int SNIProxy::WindowId() const
@@ -505,7 +564,10 @@ void SNIProxy::sendClick(uint8_t mouseButton, int x, int y)
     qCDebug(SNIPROXY) << "Received click" << mouseButton << "with passed x*y" << x << y;
     sendingClickEvent = true;
 
-    auto c = QX11Info::connection();
+    auto& xcbConn = XcbConnection::instance();
+    if (!xcbConn.isValid()) 
+        return;
+    auto c = xcbConn.connection();
 
     auto cookieSize = xcb_get_geometry(c, m_windowId);
     QScopedPointer<xcb_get_geometry_reply_t, QScopedPointerPodDeleter> clientGeom(xcb_get_geometry_reply(c, cookieSize, nullptr));
@@ -542,51 +604,35 @@ void SNIProxy::sendClick(uint8_t mouseButton, int x, int y)
     // pull window up
     stackContainerWindow(XCB_STACK_MODE_ABOVE);
 
-    // mouse down
+    // 替换所有 X11 相关的调用
     if (m_injectMode == Direct) {
-        xcb_button_press_event_t *event = new xcb_button_press_event_t;
-        memset(event, 0x00, sizeof(xcb_button_press_event_t));
-        event->response_type = XCB_BUTTON_PRESS;
-        event->event = m_windowId;
-        event->time = QX11Info::getTimestamp();
-        event->same_screen = 1;
-        event->root = QX11Info::appRootWindow();
-        event->root_x = x;
-        event->root_y = y;
-        event->event_x = static_cast<int16_t>(clickPoint.x());
-        event->event_y = static_cast<int16_t>(clickPoint.y());
-        event->child = 0;
-        event->state = 0;
-        event->detail = mouseButton;
+        xcb_button_press_event_t event;
+        memset(&event, 0, sizeof(event));
+        event.response_type = XCB_BUTTON_PRESS;
+        event.event = m_windowId;
+        event.time = XCB_CURRENT_TIME;
+        event.same_screen = 1;
+        event.root = XcbConnection::instance().rootWindow(); 
+        event.root_x = x;
+        event.root_y = y;
+        event.event_x = static_cast<int16_t>(clickPoint.x());
+        event.event_y = static_cast<int16_t>(clickPoint.y());
+        event.child = 0;
+        event.state = 0;
+        event.detail = mouseButton;
 
-        xcb_send_event(c, false, m_windowId, XCB_EVENT_MASK_BUTTON_PRESS, (char *)event);
-        delete event;
+        xcb_send_event(c, false, m_windowId, XCB_EVENT_MASK_BUTTON_PRESS, (char *)&event);
+        
+        // 发送释放事件
+        event.response_type = XCB_BUTTON_RELEASE;
+        xcb_send_event(c, false, m_windowId, XCB_EVENT_MASK_BUTTON_RELEASE, (char *)&event);
     } else {
-        sendXTestPressed(QX11Info::display(), mouseButton);
+        // 使用 XTest 扩展
+        sendXTestPressed(XcbConnection::instance().xlibDisplay(), mouseButton);
+        sendXTestReleased(XcbConnection::instance().xlibDisplay(), mouseButton);
     }
-
-    // mouse up
-    if (m_injectMode == Direct) {
-        xcb_button_release_event_t *event = new xcb_button_release_event_t;
-        memset(event, 0x00, sizeof(xcb_button_release_event_t));
-        event->response_type = XCB_BUTTON_RELEASE;
-        event->event = m_windowId;
-        event->time = QX11Info::getTimestamp();
-        event->same_screen = 1;
-        event->root = QX11Info::appRootWindow();
-        event->root_x = x;
-        event->root_y = y;
-        event->event_x = static_cast<int16_t>(clickPoint.x());
-        event->event_y = static_cast<int16_t>(clickPoint.y());
-        event->child = 0;
-        event->state = 0;
-        event->detail = mouseButton;
-
-        xcb_send_event(c, false, m_windowId, XCB_EVENT_MASK_BUTTON_RELEASE, (char *)event);
-        delete event;
-    } else {
-        sendXTestReleased(QX11Info::display(), mouseButton);
-    }
+    
+    xcb_flush(c);
 
 #ifndef VISUAL_DEBUG
     stackContainerWindow(XCB_STACK_MODE_BELOW);

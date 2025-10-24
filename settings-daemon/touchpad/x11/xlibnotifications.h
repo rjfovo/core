@@ -8,10 +8,10 @@
 #define XLIBNOTIFICATIONS_H
 
 #include <QSocketNotifier>
-#include <QX11Info>
-
-#include <X11/Xlib.h>
 #include <xcb/xcb.h>
+
+typedef struct _XDisplay Display;
+typedef union _XEvent XEvent;
 
 class XlibNotifications : public QObject
 {

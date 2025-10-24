@@ -59,7 +59,9 @@ public:
      * @return The status of this item
      * @see Status
      */
-    QString Status() const;
+    QString Status() const{
+        return QStringLiteral("Active");
+    }
 
     /**
      * @return The id of the main window of the application that controls the item

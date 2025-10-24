@@ -17,7 +17,9 @@
 
 #include <QScopedPointer>
 #include <QVector>
-#include <QX11Info>
+
+// 添加这些头文件
+#include <xcb/xcb_aux.h>
 
 /** XEMBED messages */
 #define XEMBED_EMBEDDED_NOTIFY 0
@@ -39,20 +41,26 @@ using ScopedCPointer = QScopedPointer<T, QScopedPointerPodDeleter>;
 class Atom
 {
 public:
-    explicit Atom(const QByteArray &name, bool onlyIfExists = false, xcb_connection_t *c = QX11Info::connection())
+    explicit Atom(const QByteArray &name, bool onlyIfExists = false, xcb_connection_t *c = nullptr)
         : m_connection(c)
         , m_retrieved(false)
-        , m_cookie(xcb_intern_atom_unchecked(m_connection, onlyIfExists, name.length(), name.constData()))
         , m_atom(XCB_ATOM_NONE)
         , m_name(name)
     {
+        // 如果没有提供连接，尝试获取默认连接
+        if (!m_connection) {
+            // 这里需要确保已经有活动的连接
+            // 在实际使用中，建议总是传入连接
+            return;
+        }
+        m_cookie = xcb_intern_atom_unchecked(m_connection, onlyIfExists, name.length(), name.constData());
     }
     Atom() = delete;
     Atom(const Atom &) = delete;
 
     ~Atom()
     {
-        if (!m_retrieved && m_cookie.sequence) {
+        if (!m_retrieved && m_cookie.sequence && m_connection) {
             xcb_discard_reply(m_connection, m_cookie.sequence);
         }
     }
@@ -78,10 +86,20 @@ public:
         return m_name;
     }
 
+    // 设置连接的方法
+    void setConnection(xcb_connection_t *conn)
+    {
+        m_connection = conn;
+        if (m_connection && !m_name.isEmpty()) {
+            m_cookie = xcb_intern_atom_unchecked(m_connection, false, m_name.length(), m_name.constData());
+            m_retrieved = false;
+        }
+    }
+
 private:
     void getReply()
     {
-        if (m_retrieved || !m_cookie.sequence) {
+        if (m_retrieved || !m_cookie.sequence || !m_connection) {
             return;
         }
         ScopedCPointer<xcb_intern_atom_reply_t> reply(xcb_intern_atom_reply(m_connection, m_cookie, nullptr));
@@ -100,13 +118,35 @@ private:
 class Atoms
 {
 public:
-    Atoms()
-        : xembedAtom("_XEMBED")
-        , selectionAtom(xcb_atom_name_by_screen("_NET_SYSTEM_TRAY", QX11Info::appScreen()))
-        , opcodeAtom("_NET_SYSTEM_TRAY_OPCODE")
-        , messageData("_NET_SYSTEM_TRAY_MESSAGE_DATA")
-        , visualAtom("_NET_SYSTEM_TRAY_VISUAL")
+    Atoms(xcb_connection_t *connection = nullptr, int screen = 0)
+        : m_connection(connection)
+        , m_screen(screen)
+        , xembedAtom("_XEMBED", false, connection)
+        , selectionAtom(getSelectionAtomName(screen), false, connection)
+        , opcodeAtom("_NET_SYSTEM_TRAY_OPCODE", false, connection)
+        , messageData("_NET_SYSTEM_TRAY_MESSAGE_DATA", false, connection)
+        , visualAtom("_NET_SYSTEM_TRAY_VISUAL", false, connection)
+        // 添加缺失的原子
+        , netWmNameAtom("_NET_WM_NAME", false, connection)
+        , utf8StringAtom("UTF8_STRING", false, connection)
+        , wmNameAtom("WM_NAME", false, connection)
     {
+    }
+
+    void setConnection(xcb_connection_t *connection, int screen = 0)
+    {
+        m_connection = connection;
+        m_screen = screen;
+        
+        xembedAtom.setConnection(connection);
+        selectionAtom = Atom(getSelectionAtomName(screen), false, connection);
+        opcodeAtom.setConnection(connection);
+        messageData.setConnection(connection);
+        visualAtom.setConnection(connection);
+        // 为新原子设置连接
+        netWmNameAtom.setConnection(connection);
+        utf8StringAtom.setConnection(connection);
+        wmNameAtom.setConnection(connection);
     }
 
     Atom xembedAtom;
@@ -114,6 +154,19 @@ public:
     Atom opcodeAtom;
     Atom messageData;
     Atom visualAtom;
+    // 添加缺失的原子成员
+    Atom netWmNameAtom;
+    Atom utf8StringAtom;
+    Atom wmNameAtom;
+
+private:
+    QByteArray getSelectionAtomName(int screen) const
+    {
+        return QByteArray("_NET_SYSTEM_TRAY_S") + QByteArray::number(screen);
+    }
+
+    xcb_connection_t *m_connection;
+    int m_screen;
 };
 
 extern Atoms *atoms;

@@ -11,7 +11,6 @@
 
 #include <QCoreApplication>
 #include <QTimer>
-#include <QX11Info>
 
 #include <KSelectionOwner>
 
@@ -30,8 +29,22 @@
 FdoSelectionManager::FdoSelectionManager()
     : QObject()
     , m_selectionOwner(new KSelectionOwner(Xcb::atoms->selectionAtom, -1, this))
+    , m_connection(nullptr)
+    , m_screenNumber(0)
 {
     qCDebug(SNIPROXY) << "starting";
+
+    // 初始化 XCB 连接
+    m_connection = xcb_connect(nullptr, &m_screenNumber);
+    if (xcb_connection_has_error(m_connection)) {
+        qCCritical(SNIPROXY) << "Failed to connect to X server";
+        return;
+    }
+
+    // 初始化 atoms
+    if (Xcb::atoms) {
+        Xcb::atoms->setConnection(m_connection, m_screenNumber);
+    }
 
     // we may end up calling QCoreApplication::quit() in this method, at which point we need the event loop running
     QTimer::singleShot(0, this, &FdoSelectionManager::init);
@@ -41,17 +54,41 @@ FdoSelectionManager::~FdoSelectionManager()
 {
     qCDebug(SNIPROXY) << "closing";
     m_selectionOwner->release();
+    if (m_connection) {
+        xcb_disconnect(m_connection);
+    }
+}
+
+xcb_connection_t* FdoSelectionManager::connection() const
+{
+    return m_connection;
+}
+
+xcb_screen_t* FdoSelectionManager::screen() const
+{
+    if (!m_connection) return nullptr;
+    
+    xcb_screen_iterator_t iter = xcb_setup_roots_iterator(xcb_get_setup(m_connection));
+    for (int i = 0; i < m_screenNumber; i++) {
+        xcb_screen_next(&iter);
+    }
+    return iter.data;
 }
 
 void FdoSelectionManager::init()
 {
+    if (!m_connection) {
+        qCCritical(SNIPROXY) << "No XCB connection available. Quitting";
+        qApp->exit(-1);
+        return;
+    }
+
     // load damage extension
-    xcb_connection_t *c = QX11Info::connection();
-    xcb_prefetch_extension_data(c, &xcb_damage_id);
-    const auto *reply = xcb_get_extension_data(c, &xcb_damage_id);
+    xcb_prefetch_extension_data(m_connection, &xcb_damage_id);
+    const auto *reply = xcb_get_extension_data(m_connection, &xcb_damage_id);
     if (reply && reply->present) {
         m_damageEventBase = reply->first_event;
-        xcb_damage_query_version_unchecked(c, XCB_DAMAGE_MAJOR_VERSION, XCB_DAMAGE_MINOR_VERSION);
+        xcb_damage_query_version_unchecked(m_connection, XCB_DAMAGE_MAJOR_VERSION, XCB_DAMAGE_MINOR_VERSION);
     } else {
         // no XDamage means
         qCCritical(SNIPROXY) << "could not load damage extension. Quitting";
@@ -70,15 +107,16 @@ bool FdoSelectionManager::addDamageWatch(xcb_window_t client)
 {
     qCDebug(SNIPROXY) << "adding damage watch for " << client;
 
-    xcb_connection_t *c = QX11Info::connection();
-    const auto attribsCookie = xcb_get_window_attributes_unchecked(c, client);
+    if (!m_connection) return false;
 
-    const auto damageId = xcb_generate_id(c);
+    const auto attribsCookie = xcb_get_window_attributes_unchecked(m_connection, client);
+
+    const auto damageId = xcb_generate_id(m_connection);
     m_damageWatches[client] = damageId;
-    xcb_damage_create(c, damageId, client, XCB_DAMAGE_REPORT_LEVEL_NON_EMPTY);
+    xcb_damage_create(m_connection, damageId, client, XCB_DAMAGE_REPORT_LEVEL_NON_EMPTY);
 
     xcb_generic_error_t *error = nullptr;
-    QScopedPointer<xcb_get_window_attributes_reply_t, QScopedPointerPodDeleter> attr(xcb_get_window_attributes_reply(c, attribsCookie, &error));
+    QScopedPointer<xcb_get_window_attributes_reply_t, QScopedPointerPodDeleter> attr(xcb_get_window_attributes_reply(m_connection, attribsCookie, &error));
     QScopedPointer<xcb_generic_error_t, QScopedPointerPodDeleter> getAttrError(error);
     uint32_t events = XCB_EVENT_MASK_STRUCTURE_NOTIFY;
     if (!attr.isNull()) {
@@ -90,8 +128,8 @@ bool FdoSelectionManager::addDamageWatch(xcb_window_t client)
     }
     // the event mask will not be removed again. We cannot track whether another component also needs STRUCTURE_NOTIFY (e.g. KWindowSystem).
     // if we would remove the event mask again, other areas will break.
-    const auto changeAttrCookie = xcb_change_window_attributes_checked(c, client, XCB_CW_EVENT_MASK, &events);
-    QScopedPointer<xcb_generic_error_t, QScopedPointerPodDeleter> changeAttrError(xcb_request_check(c, changeAttrCookie));
+    const auto changeAttrCookie = xcb_change_window_attributes_checked(m_connection, client, XCB_CW_EVENT_MASK, &events);
+    QScopedPointer<xcb_generic_error_t, QScopedPointerPodDeleter> changeAttrError(xcb_request_check(m_connection, changeAttrCookie));
     // if window is gone by this point, it will be caught by eventFilter, so no need to check later errors.
     if (changeAttrError && changeAttrError->error_code == XCB_WINDOW) {
         return false;
@@ -100,7 +138,7 @@ bool FdoSelectionManager::addDamageWatch(xcb_window_t client)
     return true;
 }
 
-bool FdoSelectionManager::nativeEventFilter(const QByteArray &eventType, void *message, long int *result)
+bool FdoSelectionManager::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
 {
     Q_UNUSED(result)
 
@@ -135,7 +173,9 @@ bool FdoSelectionManager::nativeEventFilter(const QByteArray &eventType, void *m
         const auto sniProxy = m_proxies.value(damagedWId);
         if (sniProxy) {
             sniProxy->update();
-            xcb_damage_subtract(QX11Info::connection(), m_damageWatches[damagedWId], XCB_NONE, XCB_NONE);
+            if (m_connection && m_damageWatches.contains(damagedWId)) {
+                xcb_damage_subtract(m_connection, m_damageWatches[damagedWId], XCB_NONE, XCB_NONE);
+            }
         }
     } else if (responseType == XCB_CONFIGURE_REQUEST) {
         const auto event = reinterpret_cast<xcb_configure_request_event_t *>(ev);
@@ -205,10 +245,13 @@ void FdoSelectionManager::onLostOwnership()
 
 void FdoSelectionManager::setSystemTrayVisual()
 {
-    xcb_connection_t *c = QX11Info::connection();
-    auto screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
-    auto trayVisual = screen->root_visual;
-    xcb_depth_iterator_t depth_iterator = xcb_screen_allowed_depths_iterator(screen);
+    if (!m_connection) return;
+    
+    auto screen_ptr = screen();
+    if (!screen_ptr) return;
+    
+    auto trayVisual = screen_ptr->root_visual;
+    xcb_depth_iterator_t depth_iterator = xcb_screen_allowed_depths_iterator(screen_ptr);
     xcb_depth_t *depth = nullptr;
 
     while (depth_iterator.rem) {
@@ -231,5 +274,5 @@ void FdoSelectionManager::setSystemTrayVisual()
         }
     }
 
-    xcb_change_property(c, XCB_PROP_MODE_REPLACE, m_selectionOwner->ownerWindow(), Xcb::atoms->visualAtom, XCB_ATOM_VISUALID, 32, 1, &trayVisual);
+    xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, m_selectionOwner->ownerWindow(), Xcb::atoms->visualAtom, XCB_ATOM_VISUALID, 32, 1, &trayVisual);
 }

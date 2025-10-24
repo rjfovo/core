@@ -10,6 +10,8 @@
 #include <QSharedPointer>
 #include <X11/Xdefs.h>
 
+typedef struct _XDisplay Display;
+
 void XDeleter(void *p);
 
 struct PropertyInfo {

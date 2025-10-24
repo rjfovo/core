@@ -17,7 +17,6 @@ if(X11_FOUND)
   if(NOT X11_SM_FOUND)
     message(FATAL_ERROR "\nThe X11 Session Management (SM) development package could not be found.\nPlease install libSM.\n")
   endif(NOT X11_SM_FOUND)
-
   #find_package(Qt6 ${QT_MIN_VERSION} CONFIG REQUIRED COMPONENTS X11Extras)
 endif()
 
@@ -36,6 +35,12 @@ find_package(XCB
         UTIL
         IMAGE
 )
+
+# 查找 X11 和 XCB 相关库
+pkg_check_modules(X11 REQUIRED x11)
+pkg_check_modules(XCB REQUIRED xcb)
+pkg_check_modules(X11_XCB REQUIRED x11-xcb)  # 专门用于 XGetXCBConnection
+pkg_check_modules(XCB_UTIL REQUIRED xcb-util)
 
 find_package(KF6WindowSystem)
 
@@ -57,6 +62,7 @@ set(XEMBED_SNI_PROXY_SOURCES
     sniproxy.cpp
     debug.cpp
     xtestsender.cpp
+    xcb_connection.cpp
 )
 
 qt6_add_dbus_adaptor(DBUS_SOURCES org.kde.StatusNotifierItem.xml
@@ -74,6 +80,10 @@ target_link_libraries(cutefish-xembedsniproxy
     KF6::WindowSystem
     ${XCB_LIBS}
     ${X11_XTest_LIB}
+    ${X11_LIBRARIES}
+    ${XCB_LIBRARIES}
+    ${X11_XCB_LIBRARIES}  # 添加这个
+    ${XCB_UTIL_LIBRARIES}
 )
 
 install(TARGETS cutefish-xembedsniproxy DESTINATION ${CMAKE_INSTALL_BINDIR})

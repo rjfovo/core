@@ -25,7 +25,7 @@ public:
     ~FdoSelectionManager() override;
 
 protected:
-    bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) override;
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
 private Q_SLOTS:
     void onClaimedOwnership();
@@ -44,4 +44,10 @@ private:
     QHash<xcb_window_t, u_int32_t> m_damageWatches;
     QHash<xcb_window_t, SNIProxy *> m_proxies;
     KSelectionOwner *m_selectionOwner;
+
+    xcb_connection_t *m_connection;
+    int m_screenNumber;
+    
+    xcb_connection_t* connection() const;
+    xcb_screen_t* screen() const;
 };

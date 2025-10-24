@@ -15,6 +15,8 @@
 #include "xcbatom.h"
 #include <xcb/xcb.h>
 
+typedef struct _XDisplay Display;
+
 enum ParaType {
     PT_INT,
     PT_BOOL,

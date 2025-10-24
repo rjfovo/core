@@ -13,6 +13,7 @@
 
 #include <X11/Xlib.h>
 #include <xcb/xcbext.h>
+#include <X11/extensions/record.h> 
 
 XRecordKeyboardMonitor::XRecordKeyboardMonitor(Display *display)
     : m_connection(xcb_connect(XDisplayString(display), nullptr))
