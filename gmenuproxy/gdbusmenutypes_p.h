@@ -10,6 +10,7 @@
 #include <QList>
 #include <QMap>
 #include <QVariant>
+#include <QStringList>
 
 class QDBusArgument;
 

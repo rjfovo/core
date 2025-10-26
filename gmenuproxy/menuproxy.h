@@ -51,6 +51,9 @@ private:
     QByteArray getWindowPropertyString(WId id, const QByteArray &name);
     void writeWindowProperty(WId id, const QByteArray &name, const QByteArray &value);
     xcb_atom_t getAtom(const QByteArray &name);
+    xcb_connection_t *getXCBConnection();
+    
+private:
 
     QHash<WId, Window *> m_windows;
 

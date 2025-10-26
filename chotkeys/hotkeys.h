@@ -29,6 +29,8 @@
 
 #include <xcb/xcb.h>
 
+typedef struct _XDisplay Display;
+
 class Hotkeys : public QObject, public QAbstractNativeEventFilter
 {
     Q_OBJECT
@@ -37,7 +39,7 @@ public:
     explicit Hotkeys(QObject *parent = nullptr);
     ~Hotkeys();
 
-    bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) override;
+    bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
     void registerKey(QKeySequence keySequence);
     void registerKey(quint32 keycode);
@@ -55,6 +57,11 @@ private:
     quint32 nativeModifiers(Qt::KeyboardModifiers m);
     Qt::Key getKey(const QKeySequence& keyseq);
     Qt::KeyboardModifiers getMods(const QKeySequence& keyseq);
+
+private:
+    xcb_connection_t *connection() const;
+    xcb_window_t rootWindow() const;
+    Display *display() const;
 
 private:
     QHash<quint32, QKeySequence> m_shortcuts;

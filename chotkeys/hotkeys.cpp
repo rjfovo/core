@@ -21,7 +21,6 @@
 
 #include <QApplication>
 #include <QKeySequence>
-#include <QX11Info>
 #include <QTimer>
 #include <QDebug>
 
@@ -30,6 +29,7 @@
 
 // XCB & X11
 #include <X11/Xlib.h>
+#include <xcb/xcb.h>
 #include <X11/keysym.h>
 #include <xcb/xcb_keysyms.h>
 
@@ -38,17 +38,27 @@
 Hotkeys::Hotkeys(QObject *parent)
     : QObject(parent)
 {
-    qApp->installNativeEventFilter(this);
+    // 检查是否为 X11 平台
+    if (QGuiApplication::platformName() == "xcb") {
+        qApp->installNativeEventFilter(this);
+    }
 }
 
 Hotkeys::~Hotkeys()
 {
-    qApp->removeNativeEventFilter(this);
+    if (QGuiApplication::platformName() == "xcb") {
+        qApp->removeNativeEventFilter(this);
+    }
 }
 
-bool Hotkeys::nativeEventFilter(const QByteArray &eventType, void *message, long *result)
+bool Hotkeys::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result)
 {
     Q_UNUSED(result);
+
+    // 检查是否为 X11 平台
+    if (QGuiApplication::platformName() != "xcb") {
+        return false;
+    }
 
     if (eventType != "xcb_generic_event_t") {
         return false;
@@ -167,26 +177,23 @@ void Hotkeys::registerKey(quint32 keycode)
 
 void Hotkeys::registerKey(quint32 key, quint32 mods)
 {
-    xcb_grab_key(QX11Info::connection(),
-                 1,
-                 QX11Info::appRootWindow(),
-                 mods,
-                 key,
-                 XCB_GRAB_MODE_ASYNC,
-                 XCB_GRAB_MODE_ASYNC);
-
-    xcb_grab_key(QX11Info::connection(),
-                 1,
-                 QX11Info::appRootWindow(),
-                 mods | XCB_MOD_MASK_2,
-                 key,
-                 XCB_GRAB_MODE_ASYNC,
-                 XCB_GRAB_MODE_ASYNC);
+    xcb_connection_t *conn = connection();
+    xcb_window_t root = rootWindow();
+    
+    if (!conn) return;
+    
+    xcb_grab_key(conn, 1, root, mods, key, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+    xcb_grab_key(conn, 1, root, mods | XCB_MOD_MASK_2, key, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
 }
 
 void Hotkeys::unregisterKey(quint32 key, quint32 mods)
 {
-    xcb_ungrab_key(QX11Info::connection(), key, QX11Info::appRootWindow(), mods);
+    xcb_connection_t *conn = connection();
+    xcb_window_t root = rootWindow();
+    
+    if (!conn) return;
+    
+    xcb_ungrab_key(conn, key, root, mods);
 }
 
 quint32 Hotkeys::nativeKeycode(Qt::Key k)
@@ -263,7 +270,11 @@ quint32 Hotkeys::nativeKeycode(Qt::Key k)
             key = 0;
         }
     }
-    return XKeysymToKeycode(QX11Info::display(), key);
+
+    Display *disp = display();
+    if (!disp) return 0;
+    
+    return XKeysymToKeycode(disp, key);
 }
 
 quint32 Hotkeys::nativeModifiers(Qt::KeyboardModifiers m)
@@ -298,4 +309,31 @@ Qt::KeyboardModifiers Hotkeys::getMods(const QKeySequence &keyseq)
     }
 
     return Qt::KeyboardModifiers(keyseq[0] & Qt::KeyboardModifierMask);
+}
+
+xcb_connection_t *Hotkeys::connection() const
+{
+    if (auto *x11App = qApp->nativeInterface<QNativeInterface::QX11Application>()) {
+        return x11App->connection();
+    }
+    return nullptr;
+}
+
+xcb_window_t Hotkeys::rootWindow() const
+{
+    // 在 Qt6 中，可能需要通过其他方式获取根窗口
+    if (connection()) {
+        const xcb_setup_t *setup = xcb_get_setup(connection());
+        xcb_screen_iterator_t iter = xcb_setup_roots_iterator(setup);
+        return iter.data->root;
+    }
+    return 0;
+}
+
+Display *Hotkeys::display() const
+{
+    if (auto *x11App = qApp->nativeInterface<QNativeInterface::QX11Application>()) {
+        return x11App->display();
+    }
+    return nullptr;
 }

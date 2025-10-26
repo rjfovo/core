@@ -14,13 +14,14 @@
 
 #include <QtCore/QObject>
 #include <QtDBus/QtDBus>
+#include <QStringList>
+
 #include "window.h"
 QT_BEGIN_NAMESPACE
 class QByteArray;
 template<class T> class QList;
 template<class Key, class Value> class QMap;
 class QString;
-class QStringList;
 class QVariant;
 QT_END_NAMESPACE
 

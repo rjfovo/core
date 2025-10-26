@@ -22,7 +22,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <QDBusPendingCall>
-#include <QX11Info>
+#include <QGuiApplication>
 #include <QProcess>
 #include <QDebug>
 
@@ -35,11 +35,20 @@ DimDisplayAction::DimDisplayAction(QObject *parent)
               "/Brightness",
               "com.cutefish.Brightness", QDBusConnection::sessionBus())
 {
-    if (QX11Info::isPlatformX11()) {
-        // Disable a default timeout, if any
-        xcb_dpms_set_timeouts(QX11Info::connection(), 0, 0, 0);
-
-        XSetScreenSaver(QX11Info::display(), 0, 0, 0, 0);
+    if (QGuiApplication::platformName() == "xcb") {
+        // 方法1: 尝试使用QNativeInterface (如果可用且功能完整)
+        // 注意：Qt6.2及以上版本对X11原生接口的支持可能更完善，请查阅你所使用的Qt6版本文档
+        auto *primaryScreen = QGuiApplication::primaryScreen();
+        if (primaryScreen) {
+            // 查询X11原生接口
+            auto *x11App = qApp->nativeInterface<QNativeInterface::QX11Application>();
+            if (x11App) {
+                xcb_connection_t *connection = x11App->connection();
+                // Disable a default timeout, if any
+                xcb_dpms_set_timeouts(connection, 0, 0, 0);
+                XSetScreenSaver(x11App->display(), 0, 0, 0, 0);
+            }
+        }
     }
 }
 

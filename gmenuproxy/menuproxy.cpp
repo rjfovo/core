@@ -16,13 +16,12 @@
 #include <QTimer>
 #include <QSettings>
 #include <QDebug>
+#include <QGuiApplication>
 
-// #include <KConfigGroup>
 #include <KDirWatch>
-// #include <KSharedConfig>
-#include <KWindowSystem>
+#include <KWindowInfo>  // 包含 KWindowInfo
+#include <KX11Extras>   // 包含 KX11Extras
 
-#include <QX11Info>
 #include <xcb/xcb.h>
 
 #include "window.h"
@@ -37,7 +36,6 @@ static const QByteArray s_gtkApplicationObjectPath = QByteArrayLiteral("_GTK_APP
 static const QByteArray s_unityObjectPath = QByteArrayLiteral("_UNITY_OBJECT_PATH");
 static const QByteArray s_gtkWindowObjectPath = QByteArrayLiteral("_GTK_WINDOW_OBJECT_PATH");
 static const QByteArray s_gtkMenuBarObjectPath = QByteArrayLiteral("_GTK_MENUBAR_OBJECT_PATH");
-// that's the generic app menu with Help and Options and will be used if window doesn't have a fully-blown menu bar
 static const QByteArray s_gtkAppMenuObjectPath = QByteArrayLiteral("_GTK_APP_MENU_OBJECT_PATH");
 
 static const QByteArray s_kdeNetWmAppMenuServiceName = QByteArrayLiteral("_KDE_NET_WM_APPMENU_SERVICE_NAME");
@@ -48,7 +46,6 @@ static const QString s_appMenuGtkModule = QStringLiteral("appmenu-gtk-module");
 
 MenuProxy::MenuProxy()
     : QObject()
-    , m_xConnection(QX11Info::connection())
     , m_serviceWatcher(new QDBusServiceWatcher(this))
     , m_gtk2RcWatch(new KDirWatch(this))
     , m_writeGtk2SettingsTimer(new QTimer(this))
@@ -68,18 +65,14 @@ MenuProxy::MenuProxy()
         teardown();
     });
 
-    // It's fine to do a blocking call here as we're a separate binary with no UI
     if (QDBusConnection::sessionBus().interface()->isServiceRegistered(s_dbusMenuRegistrar)) {
         qDebug() << "Global menu service is running, starting right away";
         init();
     } else {
         qDebug() << "No global menu service available, waiting for it to start before doing anything";
-
-        // be sure when started to restore gtk menus when there's no dbus menu around in case we crashed
         enableGtkSettings(false);
     }
 
-    // kde-gtk-config just deletes and re-creates the gtkrc-2.0, watch this and add our config to it again
     m_writeGtk2SettingsTimer->setSingleShot(true);
     m_writeGtk2SettingsTimer->setInterval(1000);
     connect(m_writeGtk2SettingsTimer, &QTimer::timeout, this, &MenuProxy::writeGtk2Settings);
@@ -109,10 +102,11 @@ bool MenuProxy::init()
 
     enableGtkSettings(true);
 
-    connect(KWindowSystem::self(), &KWindowSystem::windowAdded, this, &MenuProxy::onWindowAdded);
-    connect(KWindowSystem::self(), &KWindowSystem::windowRemoved, this, &MenuProxy::onWindowRemoved);
+    // 使用 KX11Extras 替代 KWindowSystem
+    connect(KX11Extras::self(), &KX11Extras::windowAdded, this, &MenuProxy::onWindowAdded);
+    connect(KX11Extras::self(), &KX11Extras::windowRemoved, this, &MenuProxy::onWindowRemoved);
 
-    const auto windows = KWindowSystem::windows();
+    const auto windows = KX11Extras::windows();
     for (WId id : windows) {
         onWindowAdded(id);
     }
@@ -130,8 +124,8 @@ void MenuProxy::teardown()
 
     QDBusConnection::sessionBus().unregisterService(s_ourServiceName);
 
-    disconnect(KWindowSystem::self(), &KWindowSystem::windowAdded, this, &MenuProxy::onWindowAdded);
-    disconnect(KWindowSystem::self(), &KWindowSystem::windowRemoved, this, &MenuProxy::onWindowRemoved);
+    disconnect(KX11Extras::self(), &KX11Extras::windowAdded, this, &MenuProxy::onWindowAdded);
+    disconnect(KX11Extras::self(), &KX11Extras::windowRemoved, this, &MenuProxy::onWindowRemoved);
 
     qDeleteAll(m_windows);
     m_windows.clear();
@@ -140,11 +134,8 @@ void MenuProxy::teardown()
 void MenuProxy::enableGtkSettings(bool enable)
 {
     m_enabled = enable;
-
     writeGtk2Settings();
     writeGtk3Settings();
-
-    // TODO use gconf/dconf directly or at least signal a change somehow?
 }
 
 QString MenuProxy::gtkRc2Path()
@@ -161,8 +152,6 @@ void MenuProxy::writeGtk2Settings()
 {
     QFile rcFile(gtkRc2Path());
     if (!rcFile.exists()) {
-        // Don't create it here, that would break writing default GTK-2.0 settings on first login,
-        // as the gtkbreeze kconf_update script only does so if it does not exist
         return;
     }
 
@@ -173,16 +162,13 @@ void MenuProxy::writeGtk2Settings()
     }
 
     QByteArray content;
-
     QStringList gtkModules;
 
     while (!rcFile.atEnd()) {
         const QByteArray rawLine = rcFile.readLine();
-
         const QString line = QString::fromUtf8(rawLine.trimmed());
 
         if (!line.startsWith(s_gtkModules)) {
-            // keep line as-is
             content += rawLine;
             continue;
         }
@@ -192,12 +178,7 @@ void MenuProxy::writeGtk2Settings()
             continue;
         }
 
-#if QT_VERSION < QT_VERSION_CHECK(5, 15, 0)
-      gtkModules = line.mid(equalSignIdx + 1).split(QLatin1Char(':'), QString::SkipEmptyParts);
-#else
-      gtkModules = line.mid(equalSignIdx + 1).split(QLatin1Char(':'), Qt::SkipEmptyParts);
-#endif
-
+        gtkModules = line.mid(equalSignIdx + 1).split(QLatin1Char(':'), Qt::SkipEmptyParts);
         break;
     }
 
@@ -210,12 +191,9 @@ void MenuProxy::writeGtk2Settings()
     qDebug() << "  gtk-modules:" << gtkModules;
 
     m_gtk2RcWatch->stopScan();
-
-    // now write the new contents of the file
     rcFile.resize(0);
     rcFile.write(content);
     rcFile.close();
-
     m_gtk2RcWatch->startScan();
 }
 
@@ -223,7 +201,6 @@ void MenuProxy::writeGtk3Settings()
 {
     qDebug() << "Writing gtk-3.0/settings.ini" << (m_enabled ? "enable" : "disable") << "global menu support";
 
-    // mostly taken from kde-gtk-config
     QSettings cfg(gtk3SettingsIniPath(), QSettings::IniFormat);
     cfg.beginGroup(QStringLiteral("Settings"));
 
@@ -245,7 +222,6 @@ void MenuProxy::writeGtk3Settings()
     }
 
     qDebug() << "  gtk-shell-shows-menubar:" << (m_enabled ? 1 : 0);
-
     cfg.sync();
 }
 
@@ -269,14 +245,12 @@ void MenuProxy::onWindowAdded(WId id)
     NET::WindowType wType = info.windowType(NET::NormalMask | NET::DesktopMask | NET::DockMask | NET::ToolbarMask | NET::MenuMask | NET::DialogMask
                                             | NET::OverrideMask | NET::TopMenuMask | NET::UtilityMask | NET::SplashMask);
 
-    // Only top level windows typically have a menu bar, dialogs, such as settings don't
     if (wType != NET::Normal) {
         qDebug() << "Ignoring window" << id << "of type" << wType;
         return;
     }
 
     const QString serviceName = QString::fromUtf8(getWindowPropertyString(id, s_gtkUniqueBusName));
-
     if (serviceName.isEmpty()) {
         return;
     }
@@ -284,7 +258,6 @@ void MenuProxy::onWindowAdded(WId id)
     const QString applicationObjectPath = QString::fromUtf8(getWindowPropertyString(id, s_gtkApplicationObjectPath));
     const QString unityObjectPath = QString::fromUtf8(getWindowPropertyString(id, s_unityObjectPath));
     const QString windowObjectPath = QString::fromUtf8(getWindowPropertyString(id, s_gtkWindowObjectPath));
-
     const QString applicationMenuObjectPath = QString::fromUtf8(getWindowPropertyString(id, s_gtkAppMenuObjectPath));
     const QString menuBarObjectPath = QString::fromUtf8(getWindowPropertyString(id, s_gtkMenuBarObjectPath));
 
@@ -303,7 +276,6 @@ void MenuProxy::onWindowAdded(WId id)
 
     connect(window, &Window::requestWriteWindowProperties, this, [this, window] {
         Q_ASSERT(!window->proxyObjectPath().isEmpty());
-
         writeWindowProperty(window->winId(), s_kdeNetWmAppMenuServiceName, s_ourServiceName.toUtf8());
         writeWindowProperty(window->winId(), s_kdeNetWmAppMenuObjectPath, window->proxyObjectPath().toUtf8());
     });
@@ -317,25 +289,28 @@ void MenuProxy::onWindowAdded(WId id)
 
 void MenuProxy::onWindowRemoved(WId id)
 {
-    // no need to cleanup() (which removes window properties) when the window is gone, delete right away
     delete m_windows.take(id);
 }
 
 QByteArray MenuProxy::getWindowPropertyString(WId id, const QByteArray &name)
 {
     QByteArray value;
-
     auto atom = getAtom(name);
     if (atom == XCB_ATOM_NONE) {
         return value;
     }
 
-    // GTK properties aren't XCB_ATOM_STRING but a custom one
     auto utf8StringAtom = getAtom(QByteArrayLiteral("UTF8_STRING"));
-
     static const long MAX_PROP_SIZE = 10000;
-    auto propertyCookie = xcb_get_property(m_xConnection, false, id, atom, utf8StringAtom, 0, MAX_PROP_SIZE);
-    QScopedPointer<xcb_get_property_reply_t, QScopedPointerPodDeleter> propertyReply(xcb_get_property_reply(m_xConnection, propertyCookie, nullptr));
+    
+    xcb_connection_t *connection = getXCBConnection();
+    if (!connection) {
+        qDebug() << "Failed to get XCB connection";
+        return value;
+    }
+    auto propertyCookie = xcb_get_property(connection, false, id, atom, utf8StringAtom, 0, MAX_PROP_SIZE);
+    QScopedPointer<xcb_get_property_reply_t, QScopedPointerPodDeleter> propertyReply(xcb_get_property_reply(connection, propertyCookie, nullptr));
+    
     if (propertyReply.isNull()) {
         qDebug() << "XCB property reply for atom" << name << "on" << id << "was null";
         return value;
@@ -359,10 +334,17 @@ void MenuProxy::writeWindowProperty(WId id, const QByteArray &name, const QByteA
         return;
     }
 
+    // 使用新的方式获取 XCB 连接
+    xcb_connection_t *connection = getXCBConnection();
+    if (!connection) {
+        qDebug() << "Failed to get XCB connection";
+        return ;
+    }
+    
     if (value.isEmpty()) {
-        xcb_delete_property(m_xConnection, id, atom);
+        xcb_delete_property(connection, id, atom);
     } else {
-        xcb_change_property(m_xConnection, XCB_PROP_MODE_REPLACE, id, atom, XCB_ATOM_STRING, 8, value.length(), value.constData());
+        xcb_change_property(connection, XCB_PROP_MODE_REPLACE, id, atom, XCB_ATOM_STRING, 8, value.length(), value.constData());
     }
 }
 
@@ -372,8 +354,15 @@ xcb_atom_t MenuProxy::getAtom(const QByteArray &name)
 
     auto atom = s_atoms.value(name, XCB_ATOM_NONE);
     if (atom == XCB_ATOM_NONE) {
-        const xcb_intern_atom_cookie_t atomCookie = xcb_intern_atom(m_xConnection, false, name.length(), name.constData());
-        QScopedPointer<xcb_intern_atom_reply_t, QScopedPointerPodDeleter> atomReply(xcb_intern_atom_reply(m_xConnection, atomCookie, nullptr));
+        // 使用新的方式获取 XCB 连接
+        xcb_connection_t *connection = getXCBConnection();
+        if (!connection) {
+            qDebug() << "Failed to get XCB connection";
+            return XCB_ATOM_NONE;
+        }
+        const xcb_intern_atom_cookie_t atomCookie = xcb_intern_atom(connection, false, name.length(), name.constData());
+        QScopedPointer<xcb_intern_atom_reply_t, QScopedPointerPodDeleter> atomReply(xcb_intern_atom_reply(connection, atomCookie, nullptr));
+        
         if (!atomReply.isNull()) {
             atom = atomReply->atom;
             if (atom != XCB_ATOM_NONE) {
@@ -383,4 +372,12 @@ xcb_atom_t MenuProxy::getAtom(const QByteArray &name)
     }
 
     return atom;
+}
+
+xcb_connection_t *MenuProxy::getXCBConnection()
+{
+    if (auto *x11App = qApp->nativeInterface<QNativeInterface::QX11Application>()) {
+        return x11App->connection();
+    }
+    return nullptr;
 }

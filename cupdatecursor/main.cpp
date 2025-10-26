@@ -6,26 +6,14 @@
 
 #include <X11/X.h>
 #include <X11/Xcursor/Xcursor.h>
-
-// 注意：在Qt6中，我们使用 QNativeInterface::QX11Application 来获取X11连接
-#include <qpa/qplatformnativeinterface.h>
+#include <X11/Xlib.h>
 
 inline void applyTheme(const QString &theme, int size)
 {
-    // Qt6 方式获取 Display
-    Display *display = nullptr;
-    
-    // 检查是否在X11平台运行
-    if (qApp->platformName() == "xcb") {
-        QPlatformNativeInterface *native = qApp->platformNativeInterface();
-        if (native) {
-            display = static_cast<Display*>(
-                native->nativeResourceForWindow("display", nullptr));
-        }
-    }
-
+    // 手动打开 X11 显示连接
+    Display *display = XOpenDisplay(nullptr);
     if (!display) {
-        qWarning() << "Unable to get X11 display";
+        qWarning() << "Unable to open X11 display";
         return;
     }
 
@@ -39,6 +27,8 @@ inline void applyTheme(const QString &theme, int size)
     XDefineCursor(display, DefaultRootWindow(display), handle);
     XFreeCursor(display, handle);
     XFlush(display);
+    
+    XCloseDisplay(display);
 
     // For KWin
     QSettings settings(QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/kcminputrc",

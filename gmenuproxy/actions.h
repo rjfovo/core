@@ -11,8 +11,6 @@
 
 #include "gdbusmenutypes_p.h"
 
-class QStringList;
-
 class Actions : public QObject
 {
     Q_OBJECT
