@@ -23,6 +23,7 @@
 #include <QSettings>
 #include <QDataStream>
 #include <QMetaEnum>
+#include <QIODevice>  // 添加这一行
 
 static HistoryModel *s_historyModel = nullptr;
 

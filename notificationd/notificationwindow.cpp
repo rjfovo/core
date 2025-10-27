@@ -23,15 +23,17 @@
 
 #include <QQmlContext>
 
-#include <KWindowSystem>
-#include <KWindowEffects>
+// 注释掉或移除 KWindowSystem 相关头文件
+// #include <KWindowSystem>
+// #include <KWindowEffects>
 
 NotificationWindow::NotificationWindow(QQuickView *parent)
     : QQuickView(parent)
 {
     installEventFilter(this);
 
-    setFlags(Qt::Popup);
+    // 使用 Qt 原生方式设置窗口属性
+    setFlags(Qt::Popup | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
     setResizeMode(QQuickView::SizeRootObjectToView);
     setColor(Qt::transparent);
 
@@ -39,7 +41,9 @@ NotificationWindow::NotificationWindow(QQuickView *parent)
     rootContext()->setContextProperty("notificationsModel", NotificationsModel::self());
     rootContext()->setContextProperty("historyModel", HistoryModel::self());
 
+    // 注释掉 KWindowEffects 相关代码
     // KWindowEffects::slideWindow(winId(), KWindowEffects::RightEdge);
+    
     setSource(QUrl("qrc:/qml/NotificationWindow.qml"));
     setVisible(false);
 }
@@ -55,7 +59,8 @@ bool NotificationWindow::eventFilter(QObject *object, QEvent *event)
 {
     if (event->type() == QEvent::MouseButtonPress) {
         if (QWindow *w = qobject_cast<QWindow*>(object)) {
-            if (!w->geometry().contains(static_cast<QMouseEvent*>(event)->globalPos())) {
+            // 修复弃用的 globalPos() 调用
+            if (!w->geometry().contains(static_cast<QMouseEvent*>(event)->globalPosition().toPoint())) {
                 QQuickView::setVisible(false);
             }
         }
@@ -65,7 +70,12 @@ bool NotificationWindow::eventFilter(QObject *object, QEvent *event)
             QQuickView::setVisible(false);
         }
     } else if (event->type() == QEvent::Show) {
-        KWindowSystem::setState(winId(), NET::SkipTaskbar | NET::SkipPager | NET::SkipSwitcher);
+        // 移除 KWindowSystem 调用，使用 Qt 原生方式
+        // KWindowSystem::setState(winId(), NET::SkipTaskbar | NET::SkipPager | NET::SkipSwitcher);
+        
+        // 确保窗口不会出现在任务栏等地方
+        setFlags(flags() | Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
+        
         HistoryModel::self()->updateTime();
     } else if (event->type() == QEvent::Hide) {
         setMouseGrabEnabled(false);

@@ -20,9 +20,7 @@
 #include "notificationpopup.h"
 
 #include <QQmlContext>
-
-#include <KWindowSystem>
-#include <KWindowEffects>
+#include <QWindow>
 
 NotificationPopup::NotificationPopup(QQuickView *parent)
     : QQuickView(parent)
@@ -31,13 +29,17 @@ NotificationPopup::NotificationPopup(QQuickView *parent)
 
     setResizeMode(QQuickView::SizeRootObjectToView);
     setColor(Qt::transparent);
+    
+    // 在构造函数中一次性设置所有窗口标志
+    setFlags(Qt::Tool | 
+             Qt::FramelessWindowHint | 
+             Qt::WindowDoesNotAcceptFocus |
+             Qt::WindowStaysOnTopHint);
 }
 
 bool NotificationPopup::eventFilter(QObject *object, QEvent *event)
 {
-    if (event->type() == QEvent::Show) {
-        KWindowSystem::setState(winId(), NET::SkipTaskbar | NET::SkipPager | NET::SkipSwitcher);
-    }
-
+    // 如果不需要特殊处理 Show 事件，可以完全移除这个条件
+    // 或者只处理其他类型的事件
     return QObject::eventFilter(object, event);
 }
