@@ -4,12 +4,12 @@
     SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 */
 
-import QtQuick 2.12
-import QtQml 2.12
-import QtQuick.Controls 2.12
-import QtQuick.Layouts 1.12
-import QtQuick.Window 2.12
-import QtGraphicalEffects 1.0
+import QtQuick 6.0
+import QtQml 6.0
+import QtQuick.Controls 6.0
+import QtQuick.Layouts 6.0
+import QtQuick.Window 6.0
+import Qt5Compat.GraphicalEffects 1.0
 import FishUI 1.0 as FishUI
 import Cutefish.Notification 1.0
 

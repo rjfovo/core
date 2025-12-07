@@ -11,56 +11,66 @@ TouchpadManager::TouchpadManager(QObject *parent)
     new TouchpadAdaptor(this);
     QDBusConnection::sessionBus().registerObject(QStringLiteral("/Touchpad"), this);
 
-    m_backend->getConfig();
-    m_backend->applyConfig();
+    if (m_backend) {
+        m_backend->getConfig();
+        m_backend->applyConfig();
+    }
 }
 
 bool TouchpadManager::available() const
 {
-    return m_backend->isTouchpadAvailable();
+    return m_backend ? m_backend->isTouchpadAvailable() : false;
 }
 
 bool TouchpadManager::enabled() const
 {
-    return m_backend->isTouchpadEnabled();
+    return m_backend ? m_backend->isTouchpadEnabled() : false;
 }
 
 void TouchpadManager::setEnabled(bool enabled)
 {
-    m_backend->setTouchpadEnabled(enabled);
-    m_backend->applyConfig();
+    if (m_backend) {
+        m_backend->setTouchpadEnabled(enabled);
+        m_backend->applyConfig();
+    }
 }
 
 bool TouchpadManager::tapToClick() const
 {
-    return m_backend->tapToClick();
+    return m_backend ? m_backend->tapToClick() : false;
 }
 
 void TouchpadManager::setTapToClick(bool value)
 {
-    m_backend->setTapToClick(value);
-    m_backend->applyConfig();
+    if (m_backend) {
+        m_backend->setTapToClick(value);
+        m_backend->applyConfig();
+    }
 }
 
 bool TouchpadManager::naturalScroll() const
 {
-    return m_backend->naturalScroll();
+    return m_backend ? m_backend->naturalScroll() : false;
 }
 
 void TouchpadManager::setNaturalScroll(bool naturalScroll)
 {
-    m_backend->setNaturalScroll(naturalScroll);
-    m_backend->applyConfig();
+    if (m_backend) {
+        m_backend->setNaturalScroll(naturalScroll);
+        m_backend->applyConfig();
+    }
 }
 
 qreal TouchpadManager::pointerAcceleration() const
 {
-    return m_backend->pointerAcceleration();
+    return m_backend ? m_backend->pointerAcceleration() : 1.0;
 }
 
 void TouchpadManager::setPointerAcceleration(qreal value)
 {
     qDebug() << value;
-    m_backend->setPointerAcceleration(value);
-    m_backend->applyConfig();
+    if (m_backend) {
+        m_backend->setPointerAcceleration(value);
+        m_backend->applyConfig();
+    }
 }

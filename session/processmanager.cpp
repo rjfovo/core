@@ -79,6 +79,8 @@ void ProcessManager::start()
 {
     startWindowManager();
     startDaemonProcess();
+    // Start desktop process after window manager is ready
+    QTimer::singleShot(1000, this, &ProcessManager::startDesktopProcess);
 }
 
 void ProcessManager::logout()

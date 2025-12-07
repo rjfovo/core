@@ -26,6 +26,12 @@ XcbAtom::XcbAtom(xcb_connection_t *c, const char *name, bool onlyIfExists)
 void XcbAtom::intern(xcb_connection_t *c, const char *name, bool onlyIfExists)
 {
     m_connection = c;
+    if (!c) {
+        // If connection is null, we cannot intern atoms. Set m_reply to nullptr.
+        m_fetched = true;
+        m_reply = nullptr;
+        return;
+    }
     m_cookie = xcb_intern_atom(c, onlyIfExists, std::strlen(name), name);
 }
 

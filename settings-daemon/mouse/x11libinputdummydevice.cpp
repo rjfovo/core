@@ -55,6 +55,10 @@ void valueWriterPart(T val, Atom valAtom, Display *dpy)
 template<>
 void valueWriterPart<bool>(bool val, Atom valAtom, Display *dpy)
 {
+    if (!dpy) {
+        return;
+    }
+    
     XIForallPointerDevices(dpy, [&](XDeviceInfo *info) {
         int deviceid = info->id;
         Status status;
@@ -96,6 +100,10 @@ void valueWriterPart<bool>(bool val, Atom valAtom, Display *dpy)
 template<>
 void valueWriterPart<qreal>(qreal val, Atom valAtom, Display *dpy)
 {
+    if (!dpy) {
+        return;
+    }
+    
     XIForallPointerDevices(dpy, [&](XDeviceInfo *info) {
         int deviceid = info->id;
         Status status;
@@ -137,11 +145,23 @@ X11LibinputDummyDevice::X11LibinputDummyDevice(QObject *parent, Display *dpy)
     m_dpy = XOpenDisplay(nullptr);
     m_ownsDisplay = (m_dpy != nullptr);
 
-    m_leftHanded.atom = XInternAtom(dpy, LIBINPUT_PROP_LEFT_HANDED, True);
-    m_middleEmulation.atom = XInternAtom(dpy, LIBINPUT_PROP_MIDDLE_EMULATION_ENABLED, True);
-    m_naturalScroll.atom = XInternAtom(dpy, LIBINPUT_PROP_NATURAL_SCROLL, True);
-    m_pointerAcceleration.atom = XInternAtom(dpy, LIBINPUT_PROP_ACCEL, True);
-    m_pointerAccelerationProfileFlat.atom = XInternAtom(dpy, LIBINPUT_PROP_ACCEL_PROFILE_ENABLED, True);
+    // 如果dpy参数为nullptr，使用我们自己的m_dpy
+    Display *displayToUse = dpy ? dpy : m_dpy;
+    
+    if (displayToUse) {
+        m_leftHanded.atom = XInternAtom(displayToUse, LIBINPUT_PROP_LEFT_HANDED, True);
+        m_middleEmulation.atom = XInternAtom(displayToUse, LIBINPUT_PROP_MIDDLE_EMULATION_ENABLED, True);
+        m_naturalScroll.atom = XInternAtom(displayToUse, LIBINPUT_PROP_NATURAL_SCROLL, True);
+        m_pointerAcceleration.atom = XInternAtom(displayToUse, LIBINPUT_PROP_ACCEL, True);
+        m_pointerAccelerationProfileFlat.atom = XInternAtom(displayToUse, LIBINPUT_PROP_ACCEL_PROFILE_ENABLED, True);
+    } else {
+        // 如果两个display都是nullptr，设置atom为None
+        m_leftHanded.atom = None;
+        m_middleEmulation.atom = None;
+        m_naturalScroll.atom = None;
+        m_pointerAcceleration.atom = None;
+        m_pointerAccelerationProfileFlat.atom = None;
+    }
 
     m_supportsDisableEvents.val = false;
     m_enabled.val = true;
@@ -162,7 +182,11 @@ X11LibinputDummyDevice::X11LibinputDummyDevice(QObject *parent, Display *dpy)
     m_supportsNaturalScroll.val = true;
     m_naturalScrollEnabledByDefault.val = false;
 
-    s_touchpadAtom = XInternAtom(m_dpy, XI_TOUCHPAD, True);
+    if (m_dpy) {
+        s_touchpadAtom = XInternAtom(m_dpy, XI_TOUCHPAD, True);
+    } else {
+        s_touchpadAtom = None;
+    }
 
     // Init
     getConfig();

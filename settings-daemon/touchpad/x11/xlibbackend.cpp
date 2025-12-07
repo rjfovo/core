@@ -84,6 +84,10 @@ XlibBackend::XlibBackend(QObject *parent)
 
 XlibTouchpad *XlibBackend::findTouchpad()
 {
+    if (!m_display) {
+        return nullptr;
+    }
+    
     int nDevices = 0;
     QScopedPointer<XDeviceInfo, DeviceListDeleter> deviceInfo(XListInputDevices(m_display.data(), &nDevices));
 
