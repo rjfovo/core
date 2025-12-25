@@ -233,8 +233,10 @@ void FdoSelectionManager::onClaimedOwnership()
 
 void FdoSelectionManager::onFailedToClaimOwnership()
 {
-    qCWarning(SNIPROXY) << "failed to claim ownership of Systray Manager";
-    qApp->exit(-1);
+    qCWarning(SNIPROXY) << "failed to claim ownership of Systray Manager, but continuing anyway";
+    // 不要退出，继续运行
+    // 在Qt6/KDE6环境中，可能有其他系统托盘管理器已经运行
+    // 我们仍然可以处理其他功能
 }
 
 void FdoSelectionManager::onLostOwnership()

@@ -1,5 +1,9 @@
+cmake_minimum_required(VERSION 3.16)
 project(cutefish-session)
 set(TARGET cutefish-session)
+
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Quick DBus)
+find_package(KF6WindowSystem REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XCB REQUIRED xcb)
@@ -27,9 +31,23 @@ qt6_add_dbus_adaptor(DBUS_SOURCES
                      sessionadaptor SessionAdaptor)
 set_source_files_properties(${DBUS_SOURCES} PROPERTIES SKIP_AUTOGEN ON)
 
-find_package(KF6WindowSystem)
-
 add_executable(${TARGET} ${SOURCES} ${DBUS_SOURCES})
+
+# 启用AUTOMOC
+set_target_properties(${TARGET} PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    AUTOUIC ON
+)
+
+# 添加包含路径
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${XCB_INCLUDE_DIRS}
+    ${XCB_EWMH_INCLUDE_DIRS}
+)
+
 target_link_libraries(${TARGET}
         Qt6::Core
         Qt6::Gui
@@ -41,12 +59,6 @@ target_link_libraries(${TARGET}
         Qt6::GuiPrivate   # 这会自动处理私有头文件路径
         ${XCB_LIBRARIES}
         ${XCB_EWMH_LIBRARIES}
-)
-
-# 添加包含路径
-target_include_directories(cutefish-session PRIVATE
-    ${XCB_INCLUDE_DIRS}
-    ${XCB_EWMH_INCLUDE_DIRS}
 )
 
 install(TARGETS ${TARGET} DESTINATION ${CMAKE_INSTALL_BINDIR})

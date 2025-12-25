@@ -50,9 +50,15 @@ int main(int argc, char **argv)
     qDBusRegisterMetaType<KDbusImageVector>();
     qDBusRegisterMetaType<KDbusToolTipStruct>();
 
-    Xcb::atoms = new Xcb::Atoms();
-
+    // 先创建FdoSelectionManager，它会初始化XCB连接
     FdoSelectionManager manager;
+    
+    // 现在我们可以初始化atoms，使用manager的连接
+    if (manager.connection()) {
+        Xcb::atoms = new Xcb::Atoms(manager.connection(), manager.screenNumber());
+    } else {
+        qFatal("Failed to get XCB connection from FdoSelectionManager");
+    }
 
     auto rc = app.exec();
 

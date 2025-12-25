@@ -98,6 +98,7 @@ int Application::run()
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("notificationsModel", m_model);
     engine.rootContext()->setContextProperty("Settings", m_settings);
+    engine.addImportPath(QStringLiteral("/usr/share/qml"));
     engine.load(QUrl("qrc:/qml/main.qml"));
 
     m_window = new NotificationWindow;

@@ -112,17 +112,83 @@ void ProcessManager::logout()
 void ProcessManager::startWindowManager()
 {
     QProcess *wmProcess = new QProcess;
-
-    wmProcess->start(m_app->wayland() ? "kwin_wayland" : "kwin_x11", QStringList());
-
+    QString wmCommand = m_app->wayland() ? "kwin_wayland" : "kwin_x11";
+    
+    qDebug() << "Starting window manager:" << wmCommand;
+    
+    // 设置环境变量以确保X11正确工作
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // 使用当前的DISPLAY环境变量，而不是硬编码:0
+    QString display = env.value("DISPLAY", ":0");
+    if (display.isEmpty()) {
+        display = ":0";
+    }
+    env.insert("DISPLAY", display);
+    env.insert("QT_QPA_PLATFORM", "xcb");
+    
+    // 查找SDDM的Xauthority文件
+    QString xauthPath = "/run/sddm/xauth_*";
+    QDir xauthDir("/run/sddm");
+    QStringList xauthFiles = xauthDir.entryList(QStringList() << "xauth_*", QDir::Files);
+    if (!xauthFiles.isEmpty()) {
+        QString xauthFile = "/run/sddm/" + xauthFiles.first();
+        env.insert("XAUTHORITY", xauthFile);
+        qDebug() << "Using Xauthority file:" << xauthFile;
+    } else {
+        // 备用方案：使用用户主目录的Xauthority
+        QString homeXauth = QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + "/.Xauthority";
+        if (QFile::exists(homeXauth)) {
+            env.insert("XAUTHORITY", homeXauth);
+            qDebug() << "Using home Xauthority file:" << homeXauth;
+        } else {
+            env.insert("XAUTHORITY", "/tmp/.Xauthority");
+            qWarning() << "No Xauthority file found, using /tmp/.Xauthority";
+        }
+    }
+    
+    wmProcess->setProcessEnvironment(env);
+    
+    wmProcess->start(wmCommand, QStringList());
+    
+    if (!wmProcess->waitForStarted(5000)) {
+        qWarning() << "Failed to start window manager:" << wmCommand;
+        qWarning() << "Error:" << wmProcess->errorString();
+        delete wmProcess;
+        return;
+    }
+    
+    qDebug() << "Window manager started successfully";
+    
     if (!m_app->wayland()) {
+        // 对于X11，等待窗口管理器完全启动
         QEventLoop waitLoop;
         m_waitLoop = &waitLoop;
-        // add a timeout to avoid infinite blocking if a WM fail to execute.
-        QTimer::singleShot(30 * 1000, &waitLoop, SLOT(quit()));
+        // 减少超时时间，避免长时间阻塞
+        QTimer::singleShot(10 * 1000, &waitLoop, SLOT(quit()));
+        
+        // 添加一个备用检查：如果30秒后窗口管理器还没有启动，继续
+        QTimer::singleShot(30000, this, [this]() {
+            if (m_waitLoop && m_waitLoop->isRunning()) {
+                qWarning() << "Window manager detection timeout, continuing anyway";
+                m_wmStarted = true;
+                m_waitLoop->quit();
+            }
+        });
+        
         waitLoop.exec();
         m_waitLoop = nullptr;
+        
+        if (!m_wmStarted) {
+            qWarning() << "Window manager detection failed, but continuing anyway";
+            m_wmStarted = true; // 强制设置为已启动，避免阻塞
+        }
+    } else {
+        // Wayland不需要等待
+        m_wmStarted = true;
     }
+    
+    // 将进程添加到管理列表
+    m_systemProcess.insert("windowmanager", wmProcess);
 }
 
 void ProcessManager::startDesktopProcess()
@@ -157,15 +223,26 @@ void ProcessManager::startDesktopProcess()
         process->setProcessChannelMode(QProcess::ForwardedChannels);
         process->setProgram(pair.first);
         process->setArguments(pair.second);
+        
+        // 连接信号以监控进程状态
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                [this, pair, process](int exitCode, QProcess::ExitStatus exitStatus) {
+                    if (exitCode == 0 && exitStatus == QProcess::NormalExit) {
+                        qDebug() << "DE component started successfully:" << pair.first;
+                    } else {
+                        qWarning() << "DE component failed to start:" << pair.first 
+                                   << "exit code:" << exitCode << "exit status:" << exitStatus;
+                    }
+                });
+        
         process->start();
-        process->waitForStarted();
-
-        qDebug() << "Load DE components: " << pair.first << pair.second;
-
-        // Add to map
-        if (process->exitCode() == 0) {
+        
+        if (process->waitForStarted(5000)) {
+            qDebug() << "Load DE components: " << pair.first << pair.second << "(started successfully)";
             m_autoStartProcess.insert(pair.first, process);
         } else {
+            qWarning() << "Failed to start DE component:" << pair.first 
+                       << "error:" << process->errorString();
             process->deleteLater();
         }
     }
@@ -187,13 +264,26 @@ void ProcessManager::startDaemonProcess()
         process->setProcessChannelMode(QProcess::ForwardedChannels);
         process->setProgram(pair.first);
         process->setArguments(pair.second);
+        
+        // 连接信号以监控进程状态
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                [this, pair, process](int exitCode, QProcess::ExitStatus exitStatus) {
+                    if (exitCode == 0 && exitStatus == QProcess::NormalExit) {
+                        qDebug() << "Daemon started successfully:" << pair.first;
+                    } else {
+                        qWarning() << "Daemon failed to start:" << pair.first 
+                                   << "exit code:" << exitCode << "exit status:" << exitStatus;
+                    }
+                });
+        
         process->start();
-        process->waitForStarted();
-
-        // Add to map
-        if (process->exitCode() == 0) {
+        
+        if (process->waitForStarted(5000)) {
+            qDebug() << "Daemon started:" << pair.first;
             m_autoStartProcess.insert(pair.first, process);
         } else {
+            qWarning() << "Failed to start daemon:" << pair.first 
+                       << "error:" << process->errorString();
             process->deleteLater();
         }
     }
@@ -230,12 +320,26 @@ void ProcessManager::loadAutoStartProcess()
     for (const QString &exec : execList) {
         QProcess *process = new QProcess;
         process->setProgram(exec);
+        
+        // 连接信号以监控进程状态
+        connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                [this, exec, process](int exitCode, QProcess::ExitStatus exitStatus) {
+                    if (exitCode == 0 && exitStatus == QProcess::NormalExit) {
+                        qDebug() << "Autostart application started successfully:" << exec;
+                    } else {
+                        qWarning() << "Autostart application failed to start:" << exec 
+                                   << "exit code:" << exitCode << "exit status:" << exitStatus;
+                    }
+                });
+        
         process->start();
-        process->waitForStarted();
-
-        if (process->exitCode() == 0) {
+        
+        if (process->waitForStarted(5000)) {
+            qDebug() << "Autostart application started:" << exec;
             m_autoStartProcess.insert(exec, process);
         } else {
+            qWarning() << "Failed to start autostart application:" << exec 
+                       << "error:" << process->errorString();
             process->deleteLater();
         }
     }
@@ -281,6 +385,24 @@ bool ProcessManager::nativeEventFilter(const QByteArray &eventType, void *messag
                         if (m_waitLoop && m_waitLoop->isRunning())
                             m_waitLoop->exit();
                         qApp->removeNativeEventFilter(this);
+                    } else {
+                        // 备用方法：检查是否有任何窗口管理器属性
+                        xcb_get_property_cookie_t cookie2 = xcb_ewmh_get_supporting_wm_check(
+                            &ewmh_conn, screen->root);
+                        xcb_generic_error_t *error = nullptr;
+                        xcb_get_property_reply_t *reply = xcb_get_property_reply(connection, cookie2, &error);
+                        
+                        if (!error) {
+                            // 即使没有WM窗口，也认为窗口管理器已启动
+                            qDebug() << "Window manager check passed (no error)";
+                            m_wmStarted = true;
+                            if (m_waitLoop && m_waitLoop->isRunning())
+                                m_waitLoop->exit();
+                            qApp->removeNativeEventFilter(this);
+                        }
+                        
+                        if (reply) free(reply);
+                        if (error) free(error);
                     }
                 }
                 

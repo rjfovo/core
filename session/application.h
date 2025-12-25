@@ -37,7 +37,7 @@ public:
 
 public slots:
     void logout() {
-        m_processManager->logout();
+        if (m_processManager) m_processManager->logout();
     }
 
     void reboot() {
@@ -55,11 +55,11 @@ public slots:
     }
 
     void startDesktopProcess() {
-        m_processManager->startDesktopProcess();
+        if (m_processManager) m_processManager->startDesktopProcess();
     }
 
     void updateNetworkProxy() {
-        m_networkProxyManager->update();
+        if (m_networkProxyManager) m_networkProxyManager->update();
     }
 
     void launch(const QString &exec, const QStringList &args);

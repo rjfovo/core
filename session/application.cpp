@@ -22,51 +22,77 @@
 
 // Qt
 #include <QCommandLineOption>
+#include <QCommandLineParser>
 #include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusVariant>
 #include <QStandardPaths>
 #include <QSettings>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QDebug>
 #include <QDir>
-
-#include <QDBusConnectionInterface>
-#include <QDBusServiceWatcher>
+#include <QTimer>
+#include <QFile>
+#include <QFileInfo>
 
 // STL
 #include <optional>
 
-std::optional<QStringList> getSystemdEnvironment()
+// Helper: try to get systemd user environment via dbus (org.freedesktop.systemd1.Manager Environment)
+static std::optional<QStringList> getSystemdEnvironment()
 {
-    QStringList list;
-    auto msg = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.systemd1"),
-                                              QStringLiteral("/org/freedesktop/systemd1"),
-                                              QStringLiteral("org.freedesktop.DBus.Properties"),
-                                              QStringLiteral("Get"));
+    // Build the method call
+    QDBusMessage msg = QDBusMessage::createMethodCall(
+        QStringLiteral("org.freedesktop.systemd1"),
+        QStringLiteral("/org/freedesktop/systemd1"),
+        QStringLiteral("org.freedesktop.DBus.Properties"),
+        QStringLiteral("Get"));
     msg << QStringLiteral("org.freedesktop.systemd1.Manager") << QStringLiteral("Environment");
-    auto reply = QDBusConnection::sessionBus().call(msg);
+
+    QDBusMessage reply = QDBusConnection::sessionBus().call(msg);
     if (reply.type() == QDBusMessage::ErrorMessage) {
         return std::nullopt;
     }
 
-    // Make sure the returned type is correct.
-    auto arguments = reply.arguments();
-    if (arguments.isEmpty() || arguments[0].userType() != qMetaTypeId<QDBusVariant>()) {
-        return std::nullopt;
-    }
-    auto variant = qdbus_cast<QVariant>(arguments[0]);
-    if (variant.type() != QVariant::StringList) {
+    const auto args = reply.arguments();
+    if (args.isEmpty()) {
         return std::nullopt;
     }
 
-    return variant.toStringList();
+    // The reply often contains a QDBusVariant wrapping a QVariantList or QStringList.
+    QVariant first = args.at(0);
+    // If it's a QDBusVariant, unwrap:
+    if (first.userType() == qMetaTypeId<QDBusVariant>()) {
+        QDBusVariant v = qdbus_cast<QDBusVariant>(first);
+        first = v.variant();
+    }
+
+    // If it's a QStringList directly:
+    if (first.canConvert<QStringList>()) {
+        return first.toStringList();
+    }
+
+    // If it's a QVariantList of strings:
+    if (first.type() == QVariant::List) {
+        QStringList out;
+        for (const QVariant &e : first.toList()) {
+            if (e.canConvert<QString>())
+                out << e.toString();
+        }
+        return out;
+    }
+
+    // Unknown format
+    return std::nullopt;
 }
 
-bool isShellVariable(const QByteArray &name)
+static bool isShellVariable(const QByteArray &name)
 {
     return name == "_" || name.startsWith("SHLVL");
 }
 
-bool isSessionVariable(const QByteArray &name)
+static bool isSessionVariable(const QByteArray &name)
 {
     // Check is variable is specific to session.
     return name == "DISPLAY" || name == "XAUTHORITY" || //
@@ -74,7 +100,7 @@ bool isSessionVariable(const QByteArray &name)
         name.startsWith("XDG_");
 }
 
-void setEnvironmentVariable(const QByteArray &name, const QByteArray &value)
+static void setEnvironmentVariable(const QByteArray &name, const QByteArray &value)
 {
     if (qgetenv(name) != value) {
         qputenv(name, value);
@@ -87,9 +113,10 @@ Application::Application(int &argc, char **argv)
     , m_networkProxyManager(new NetworkProxyManager)
     , m_wayland(false)
 {
+    // Expose D-Bus adaptor
     new SessionAdaptor(this);
 
-    // connect to D-Bus and register as an object:
+    // register DBus service/object
     QDBusConnection::sessionBus().registerService(QStringLiteral("com.cutefish.Session"));
     QDBusConnection::sessionBus().registerObject(QStringLiteral("/Session"), this);
 
@@ -97,38 +124,41 @@ Application::Application(int &argc, char **argv)
     parser.setApplicationDescription(QStringLiteral("Cutefish Session"));
     parser.addHelpOption();
 
-    QCommandLineOption waylandOption(QStringList() << "w" << "wayland" << "Wayland Mode");
+    QCommandLineOption waylandOption(QStringList() << "w" << "wayland", QStringLiteral("Wayland Mode"));
     parser.addOption(waylandOption);
     parser.process(*this);
 
-    m_wayland = parser.isSet(waylandOption);
+    // If user passed --wayland or WAYLAND_DISPLAY exists, mark wayland true
+    m_wayland = parser.isSet(waylandOption) || qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
 
+    // Ensure config dir exists early
     createConfigDirectory();
+
+    // Initialize defaults and Qt/KDE specific settings
+    initEnvironments();
     initKWinConfig();
     initLanguage();
     initScreenScaleFactors();
     initXResource();
 
-    initEnvironments();
-
+    // DBus env sync must be attempted before starting desktop processes
     if (!syncDBusEnvironment()) {
-        // Startup error
-        qDebug() << "Could not sync environment to dbus.";
-        qApp->exit(1);
+        qWarning() << "Could not sync environment to dbus (dbus-update-activation-environment failed). Continuing, but desktop may fail to start.";
+        // Not a hard exit here: continue, but many failures may follow.
     }
 
-    // We import systemd environment after we sync the dbus environment here.
-    // Otherwise it may leads to some unwanted order of applying environment
-    // variables (e.g. LANG and LC_*)
-    // ref plasma
+    // Import environment from systemd user manager (if available)
     importSystemdEnvrionment();
 
+    // Clean up some env variables that we don't want inherited later
     qunsetenv("XCURSOR_THEME");
     qunsetenv("XCURSOR_SIZE");
     qunsetenv("SESSION_MANAGER");
 
-    m_networkProxyManager->update();
+    // Update network proxy
+    if (m_networkProxyManager) m_networkProxyManager->update();
 
+    // Defer operations that should happen after startup
     QTimer::singleShot(50, this, &Application::updateUserDirs);
     QTimer::singleShot(100, m_processManager, &ProcessManager::start);
 }
@@ -140,59 +170,54 @@ bool Application::wayland() const
 
 void Application::launch(const QString &exec, const QStringList &args)
 {
-    QProcess process;
-    process.setProgram(exec);
-    process.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
-    process.setArguments(args);
-    process.startDetached();
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // Ensure our current process env is passed
+    QProcess::startDetached(exec, args, QString(), nullptr);
 }
 
 void Application::launch(const QString &exec, const QString &workingDir, const QStringList &args)
 {
-    QProcess process;
-    process.setProgram(exec);
-    process.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
-    process.setWorkingDirectory(workingDir);
-    process.setArguments(args);
-    process.startDetached();
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QProcess::startDetached(exec, args, workingDir, nullptr);
 }
 
 void Application::initEnvironments()
 {
-    // Set defaults
+    // Set XDG defaults if missing
     if (qEnvironmentVariableIsEmpty("XDG_DATA_HOME"))
         qputenv("XDG_DATA_HOME", QDir::home().absoluteFilePath(QStringLiteral(".local/share")).toLocal8Bit());
     if (qEnvironmentVariableIsEmpty("XDG_DESKTOP_DIR"))
-        qputenv("XDG_DESKTOP_DIR", QDir::home().absoluteFilePath(QStringLiteral("/Desktop")).toLocal8Bit());
+        qputenv("XDG_DESKTOP_DIR", QDir::home().absoluteFilePath(QStringLiteral("Desktop")).toLocal8Bit());
     if (qEnvironmentVariableIsEmpty("XDG_CONFIG_HOME"))
         qputenv("XDG_CONFIG_HOME", QDir::home().absoluteFilePath(QStringLiteral(".config")).toLocal8Bit());
     if (qEnvironmentVariableIsEmpty("XDG_CACHE_HOME"))
         qputenv("XDG_CACHE_HOME", QDir::home().absoluteFilePath(QStringLiteral(".cache")).toLocal8Bit());
     if (qEnvironmentVariableIsEmpty("XDG_DATA_DIRS"))
-        qputenv("XDG_DATA_DIRS", "/usr/local/share/:/usr/share/");
+        qputenv("XDG_DATA_DIRS", QByteArray("/usr/local/share/:/usr/share/"));
     if (qEnvironmentVariableIsEmpty("XDG_CONFIG_DIRS"))
-        qputenv("XDG_CONFIG_DIRS", "/etc/xdg");
+        qputenv("XDG_CONFIG_DIRS", QByteArray("/etc/xdg"));
 
-    // Environment
+    // Desktop identification
     qputenv("DESKTOP_SESSION", "Cutefish");
     qputenv("XDG_CURRENT_DESKTOP", "Cutefish");
     qputenv("XDG_SESSION_DESKTOP", "Cutefish");
 
-    // Qt
+    // Qt style/platformtheme hints for Qt6
     qputenv("QT_QPA_PLATFORMTHEME", "cutefish");
-    qputenv("QT_PLATFORM_PLUGIN", "cutefish");
-    
-    // ref: https://stackoverflow.com/questions/34399993/qml-performance-issue-when-updating-an-item-in-presence-of-many-non-overlapping
+    qputenv("QT_STYLE_OVERRIDE", "cutefish");
+
+    // Force X11 (xcb) on X11 builds to avoid Qt auto-selecting wayland when you want X11.
+    // If you intend to support Wayland, remove or guard this depending on m_wayland.
+    // 注意：只在非Wayland模式下设置QT_QPA_PLATFORM，并且只在未设置的情况下设置
+    if (!m_wayland && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", "xcb");
+    }
+
+    // Performance tweak (kept from original)
     qputenv("QT_QPA_UPDATE_IDLE_TIME", "10");
 
+    // disable auto screen scale unless explicitly enabled elsewhere
     qputenv("QT_AUTO_SCREEN_SCALE_FACTOR", "0");
-
-    // IM Config
-    // qputenv("GTK_IM_MODULE", "fcitx5");
-    // qputenv("QT4_IM_MODULE", "fcitx5");
-    // qputenv("QT_IM_MODULE", "fcitx5");
-    // qputenv("CLUTTER_IM_MODULE", "fcitx5");
-    // qputenv("XMODIFIERS", "@im=fcitx");
 }
 
 void Application::initLanguage()
@@ -200,20 +225,15 @@ void Application::initLanguage()
     QSettings settings(QSettings::UserScope, "cutefishos", "language");
     QString value = settings.value("language", "").toString();
 
-    // Init Language
     if (value.isEmpty()) {
         QFile file("/etc/locale.gen");
         if (file.open(QIODevice::ReadOnly)) {
             QStringList lines = QString(file.readAll()).split('\n');
-
             for (const QString &line : lines) {
-                if (line.startsWith('#'))
-                    continue;
-
-                if (line.trimmed().isEmpty())
-                    continue;
-
+                if (line.startsWith('#')) continue;
+                if (line.trimmed().isEmpty()) continue;
                 value = line.split(' ').first().split('.').first();
+                if (!value.isEmpty()) break;
             }
         }
     }
@@ -224,15 +244,14 @@ void Application::initLanguage()
     settings.setValue("language", value);
 
     QString str = QString("%1.UTF-8").arg(value);
-
     const auto lcValues = {
         "LANG", "LC_NUMERIC", "LC_TIME", "LC_MONETARY", "LC_MEASUREMENT", "LC_COLLATE", "LC_CTYPE"
     };
 
     for (auto lc : lcValues) {
-        const QString value = str;
-        if (!value.isEmpty()) {
-            qputenv(lc, value.toUtf8());
+        const QString v = str;
+        if (!v.isEmpty()) {
+            qputenv(lc, v.toUtf8());
         }
     }
 
@@ -248,7 +267,7 @@ void Application::initScreenScaleFactors()
 
     qputenv("QT_SCREEN_SCALE_FACTORS", QByteArray::number(scaleFactor));
 
-    // for Gtk
+    // for Gtk compatibility
     if (qFloor(scaleFactor) > 1) {
         qputenv("GDK_SCALE", QByteArray::number(scaleFactor, 'g', 0));
         qputenv("GDK_DPI_SCALE", QByteArray::number(1.0 / scaleFactor, 'g', 3));
@@ -262,9 +281,9 @@ void Application::initXResource()
 {
     QSettings settings(QSettings::UserScope, "cutefishos", "theme");
     qreal scaleFactor = settings.value("PixelRatio", 1.0).toReal();
-    int fontDpi = 96 * scaleFactor;
+    int fontDpi = qMax(1, int(96 * scaleFactor));
     QString cursorTheme = settings.value("CursorTheme", "default").toString();
-    int cursorSize = settings.value("CursorSize", 24).toInt() * scaleFactor;
+    int cursorSize = qMax(1, settings.value("CursorSize", 24).toInt() * int(scaleFactor));
     int xftAntialias = settings.value("XftAntialias", 1).toBool();
     QString xftHintStyle = settings.value("XftHintStyle", "hintslight").toString();
 
@@ -283,17 +302,18 @@ void Application::initXResource()
     QProcess p;
     p.start(QStringLiteral("xrdb"), {QStringLiteral("-quiet"), QStringLiteral("-merge"), QStringLiteral("-nocpp")});
     p.setProcessChannelMode(QProcess::ForwardedChannels);
-    p.write(datas.toLatin1());
-    p.closeWriteChannel();
-    p.waitForFinished(-1);
+    if (p.waitForStarted(2000)) {
+        p.write(datas.toLatin1());
+        p.closeWriteChannel();
+        p.waitForFinished(-1);
+    } else {
+        qWarning() << "Could not start xrdb to set X resources";
+    }
 
-    // For cutefish-wine
     qputenv("CUTEFISH_FONT_DPI", QByteArray::number(fontDpi));
 
-    // Init cursor
+    // Init cursor (helper)
     runSync("cupdatecursor", {cursorTheme, QString::number(cursorSize)});
-    // qputenv("XCURSOR_THEME", cursorTheme.toLatin1());
-    // qputenv("XCURSOR_SIZE", QByteArray::number(cursorSize * scaleFactor));
 }
 
 void Application::initKWinConfig()
@@ -324,19 +344,38 @@ void Application::initKWinConfig()
 
 bool Application::syncDBusEnvironment()
 {
-    int exitCode = 0;
-
-    // At this point all environment variables are set, let's send it to the DBus session server to update the activation environment
-    if (!QStandardPaths::findExecutable(QStringLiteral("dbus-update-activation-environment")).isEmpty()) {
-        exitCode = runSync(QStringLiteral("dbus-update-activation-environment"), { QStringLiteral("--systemd"), QStringLiteral("--all") });
+    // Attempt to synchronize a minimal set of environment variables to the DBus activation environment.
+    // On modern systemd-user setups, --systemd may be undesirable because systemd-user will control this.
+    // We'll try to call dbus-update-activation-environment without --systemd and explicitly pass variable names.
+    QString exe = QStandardPaths::findExecutable(QStringLiteral("dbus-update-activation-environment"));
+    if (exe.isEmpty()) {
+        qWarning() << "dbus-update-activation-environment not found in PATH";
+        return false;
     }
 
-    return exitCode == 0;
+    // Variables we want the session activation environment to inherit.
+    QStringList vars;
+    vars << QStringLiteral("DISPLAY")
+         << QStringLiteral("XAUTHORITY")
+         << QStringLiteral("WAYLAND_DISPLAY")
+         << QStringLiteral("XDG_CURRENT_DESKTOP")
+         << QStringLiteral("XDG_SESSION_DESKTOP")
+         << QStringLiteral("DESKTOP_SESSION")
+         << QStringLiteral("QT_QPA_PLATFORMTHEME")
+         << QStringLiteral("QT_STYLE_OVERRIDE")
+         << QStringLiteral("LANG")
+         << QStringLiteral("LANGUAGE");
+
+    // If user explicitly wants all, we fallback to --all (but avoid --systemd)
+    int rc = runSync(exe, vars);
+    if (rc != 0) {
+        // fallback to --all (still avoid --systemd)
+        rc = runSync(exe, {QStringLiteral("--all")});
+    }
+
+    return rc == 0;
 }
 
-// Import systemd user environment.
-// Systemd read ~/.config/environment.d which applies to all systemd user unit.
-// But it won't work if cutefishDE is not started by systemd.
 void Application::importSystemdEnvrionment()
 {
     auto environment = getSystemdEnvironment();
@@ -363,32 +402,48 @@ void Application::createConfigDirectory()
 {
     const QString configDir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
 
-    if (!QDir().mkpath(configDir))
-        qDebug() << "Could not create config directory XDG_CONFIG_HOME: " << configDir;
+    if (!QDir().mkpath(configDir)) {
+        qWarning() << "Could not create config directory XDG_CONFIG_HOME:" << configDir;
+    }
 }
 
 void Application::updateUserDirs()
 {
-    // bool isCutefishOS = QFile::exists("/etc/cutefishos");
-
-    // if (!isCutefishOS)
-    //     return;
-
+    // This is intentionally left minimal. Optionally force xdg-user-dirs update:
     // QProcess p;
     // p.setEnvironment(QStringList() << "LC_ALL=C");
     // p.start("xdg-user-dirs-update", QStringList() << "--force");
     // p.waitForFinished(-1);
+    // For now do nothing.
+    Q_UNUSED(this);
 }
 
 int Application::runSync(const QString &program, const QStringList &args, const QStringList &env)
 {
     QProcess p;
 
-    if (!env.isEmpty())
-        p.setEnvironment(QProcess::systemEnvironment() << env);
+    // If env provided in third arg, use it as additional environment variables (NAME=VALUE)
+    if (!env.isEmpty()) {
+        QProcessEnvironment penv = QProcessEnvironment::systemEnvironment();
+        for (const QString &e : env) {
+            const int eq = e.indexOf('=');
+            if (eq > 0) {
+                penv.insert(e.left(eq), e.mid(eq + 1));
+            } else {
+                // If the env entry is not NAME=VALUE, skip inserting; it's probably not meant for environment but as arg.
+            }
+        }
+        p.setProcessEnvironment(penv);
+    } else {
+        p.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
+    }
 
     p.setProcessChannelMode(QProcess::ForwardedChannels);
     p.start(program, args);
+    if (!p.waitForStarted(5000)) {
+        qWarning() << "Failed to start" << program << "args" << args;
+        return -1;
+    }
     p.waitForFinished(-1);
 
     if (p.exitCode()) {

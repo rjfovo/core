@@ -24,6 +24,11 @@ public:
     FdoSelectionManager();
     ~FdoSelectionManager() override;
 
+    // 公共方法，供外部访问连接信息
+    xcb_connection_t* connection() const;
+    xcb_screen_t* screen() const;
+    int screenNumber() const { return m_screenNumber; }
+
 protected:
     bool nativeEventFilter(const QByteArray &eventType, void *message, qintptr *result) override;
 
@@ -47,7 +52,4 @@ private:
 
     xcb_connection_t *m_connection;
     int m_screenNumber;
-    
-    xcb_connection_t* connection() const;
-    xcb_screen_t* screen() const;
 };

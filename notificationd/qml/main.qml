@@ -9,7 +9,7 @@ import QtQml 6.0
 import QtQuick.Controls 6.0
 import QtQuick.Layouts 6.0
 import QtQuick.Window 6.0
-import Qt5Compat.GraphicalEffects 1.0
+import Qt5Compat.GraphicalEffects 6.0
 import FishUI 1.0 as FishUI
 import Cutefish.Notification 1.0
 
