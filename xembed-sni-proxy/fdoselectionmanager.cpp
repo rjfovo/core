@@ -28,7 +28,7 @@
 
 FdoSelectionManager::FdoSelectionManager()
     : QObject()
-    , m_selectionOwner(new KSelectionOwner(Xcb::atoms->selectionAtom, -1, this))
+    , m_selectionOwner(nullptr)
     , m_connection(nullptr)
     , m_screenNumber(0)
 {
@@ -41,11 +41,6 @@ FdoSelectionManager::FdoSelectionManager()
         return;
     }
 
-    // 初始化 atoms
-    if (Xcb::atoms) {
-        Xcb::atoms->setConnection(m_connection, m_screenNumber);
-    }
-
     // we may end up calling QCoreApplication::quit() in this method, at which point we need the event loop running
     QTimer::singleShot(0, this, &FdoSelectionManager::init);
 }
@@ -53,7 +48,9 @@ FdoSelectionManager::FdoSelectionManager()
 FdoSelectionManager::~FdoSelectionManager()
 {
     qCDebug(SNIPROXY) << "closing";
-    m_selectionOwner->release();
+    if (m_selectionOwner) {
+        m_selectionOwner->release();
+    }
     if (m_connection) {
         xcb_disconnect(m_connection);
     }
@@ -80,6 +77,17 @@ void FdoSelectionManager::init()
     if (!m_connection) {
         qCCritical(SNIPROXY) << "No XCB connection available. Quitting";
         qApp->exit(-1);
+        return;
+    }
+
+    // 现在创建 KSelectionOwner，此时 Xcb::atoms 应该已经初始化
+    if (!m_selectionOwner && Xcb::atoms) {
+        m_selectionOwner = new KSelectionOwner(Xcb::atoms->selectionAtom, -1, this);
+    } else if (!Xcb::atoms) {
+        // 在 QT6 环境中，Xcb::atoms 可能还没有初始化
+        // 等待一下再尝试
+        qCWarning(SNIPROXY) << "Xcb::atoms not initialized yet, retrying in 100ms";
+        QTimer::singleShot(100, this, &FdoSelectionManager::init);
         return;
     }
 

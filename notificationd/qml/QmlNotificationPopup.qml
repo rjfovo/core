@@ -98,7 +98,7 @@ NotificationPopup {
             id: _defaultIcon
             width: 48
             height: width
-            source: "image://icontheme/preferences-desktop-notification"
+            source: "image://icontheme/dialog-information"
             sourceSize: Qt.size(width, height)
             Layout.alignment: Qt.AlignVCenter
             antialiasing: true

@@ -60,8 +60,13 @@ int main(int argc, char **argv)
         qFatal("Failed to get XCB connection from FdoSelectionManager");
     }
 
+    // 确保在事件循环开始前，atoms已经初始化
+    // FdoSelectionManager::init() 将通过 QTimer::singleShot 在事件循环中调用
+    // 此时 Xcb::atoms 应该已经可用
+
     auto rc = app.exec();
 
     delete Xcb::atoms;
+    Xcb::atoms = nullptr;
     return rc;
 }
