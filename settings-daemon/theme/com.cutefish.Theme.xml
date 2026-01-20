@@ -4,8 +4,8 @@
     <method name="setDarkMode">
         <arg name="darkMode" type="b" direction="in"/>
     </method>
-    <method name="setDarkModeDimsWallpaer">
-        <arg name="darkModeDimsWallpaer" type="b" direction="in"/>
+    <method name="setDarkModeDimsWallpaper">
+        <arg name="darkModeDimsWallpaper" type="b" direction="in"/>
     </method>
     <method name="setBackgroundVisible">
         <arg name="BackgroundVisible" type="b" direction="in"/>
@@ -48,7 +48,7 @@
     <method name="updateFontConfig"></method>
 
     <property name="isDarkMode" type="b" access="read"/>
-    <property name="darkModeDimsWallpaer" type="b" access="read"/>
+    <property name="darkModeDimsWallpaper" type="b" access="read"/>
     <property name="backgroundVisible" type="b" access="read"/>
     <property name="systemFont" type="s" access="read"/>
     <property name="systemFixedFont" type="s" access="read"/>
@@ -68,7 +68,7 @@
     <signal name="wallpaperChanged">
         <arg type="s"/>
     </signal>
-    <signal name="darkModeDimsWallpaerChanged">
+    <signal name="darkModeDimsWallpaperChanged">
     </signal>
     <signal name="backgroundVisibleChanged">
     </signal>
