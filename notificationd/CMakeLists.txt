@@ -1,3 +1,12 @@
+cmake_minimum_required(VERSION 3.16)
+project(cutefish-notificationd)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Core DBus Quick Widgets LinguistTools)
+find_package(KF6WindowSystem)
+
 set(SRCS main.cpp
          application.cpp
          datehelper.cpp
@@ -20,9 +29,25 @@ set(SRCS main.cpp
 qt6_add_dbus_adaptor(DBUS_SOURCES com.cutefish.Notification.xml application.h Application)
 set_source_files_properties(${DBUS_SOURCES} PROPERTIES SKIP_AUTOGEN ON)
 
-find_package(KF6WindowSystem)
+# Find FishUI library
+find_library(FISHUI_LIBRARY FishUI
+    PATHS /usr/lib/x86_64-linux-gnu
+          /usr/local/lib
+    NO_DEFAULT_PATH
+)
 
 add_executable(cutefish-notificationd ${SRCS} ${DBUS_SOURCES})
+
+# Enable AUTOMOC for Qt classes
+set_target_properties(cutefish-notificationd PROPERTIES
+    AUTOMOC ON
+)
+
+# Add build directory to include path for generated DBus adaptor
+target_include_directories(cutefish-notificationd PRIVATE 
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
 target_link_libraries(cutefish-notificationd
     Qt6::Core
@@ -30,6 +55,7 @@ target_link_libraries(cutefish-notificationd
     Qt6::Quick
     Qt6::Widgets
     KF6::WindowSystem
+    ${FISHUI_LIBRARY}
 )
 
 install(TARGETS cutefish-notificationd

@@ -20,7 +20,6 @@
 #include "application.h"
 #include "notificationsmodel.h"
 #include "screenhelper.h"
-#include "notificationadaptor.h"
 #include "historymodel.h"
 #include "notificationpopup.h"
 
@@ -39,6 +38,9 @@
 
 #include <QDebug>
 
+// Include generated DBus adaptor
+#include "notificationadaptor.h"
+
 Application::Application(int& argc, char** argv)
     : QApplication(argc, argv)
     , m_notificationServer(NotificationServer::self())
@@ -49,6 +51,19 @@ Application::Application(int& argc, char** argv)
 {
     if (QDBusConnection::sessionBus().registerService("com.cutefish.Notification")) {
         setOrganizationName("cutefishos");
+
+        // Set icon theme for Qt6
+        // In Qt6, we need to ensure icon theme is properly set
+        QIcon::setThemeName("hicolor");
+        
+        // Also try to set fallback icon theme
+        if (QIcon::themeName().isEmpty()) {
+            QIcon::setThemeName("breeze");
+        }
+        
+        if (QIcon::themeName().isEmpty()) {
+            QIcon::setThemeName("Adwaita");
+        }
 
         // Translations
         QLocale locale;
