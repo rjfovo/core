@@ -42,7 +42,7 @@
 #include "notificationadaptor.h"
 
 Application::Application(int& argc, char** argv)
-    : QApplication(argc, argv)
+    : QGuiApplication(argc, argv)
     , m_notificationServer(NotificationServer::self())
     , m_model(NotificationsModel::self())
     , m_window(nullptr)
@@ -54,15 +54,32 @@ Application::Application(int& argc, char** argv)
 
         // Set icon theme for Qt6
         // In Qt6, we need to ensure icon theme is properly set
-        QIcon::setThemeName("hicolor");
+        // First set the search paths
+        QStringList iconThemePaths;
+        iconThemePaths << "/usr/share/icons";
+        iconThemePaths << QDir::homePath() + "/.local/share/icons";
+        iconThemePaths << "/usr/local/share/icons";
+        QIcon::setThemeSearchPaths(iconThemePaths);
         
-        // Also try to set fallback icon theme
-        if (QIcon::themeName().isEmpty()) {
-            QIcon::setThemeName("breeze");
+        // Try to set icon theme in order of preference
+        QStringList preferredThemes = {"cutefish", "Crule", "Crule-dark", "breeze", "Adwaita", "hicolor"};
+        QString themeSet = "hicolor"; // default fallback
+        
+        for (const QString &theme : preferredThemes) {
+            QString themePath = QString("/usr/share/icons/%1").arg(theme);
+            if (QDir(themePath).exists()) {
+                themeSet = theme;
+                break;
+            }
         }
         
+        QIcon::setThemeName(themeSet);
+        qDebug() << "Icon theme set to:" << QIcon::themeName() << "from search paths:" << QIcon::themeSearchPaths();
+        
+        // Ensure QIcon image provider is available for QML
+        // This is needed for image://icontheme/ URLs to work
         if (QIcon::themeName().isEmpty()) {
-            QIcon::setThemeName("Adwaita");
+            qWarning() << "No icon theme set! image://icontheme/ URLs will not work.";
         }
 
         // Translations
@@ -120,7 +137,7 @@ int Application::run()
 
     connect(m_settings, &Settings::doNotDisturbChanged, this, &Application::doNotDisturbChanged);
 
-    return QApplication::exec();
+    return QGuiApplication::exec();
 }
 
 bool Application::parseCommandLineArgs()

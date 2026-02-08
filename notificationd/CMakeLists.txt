@@ -24,7 +24,7 @@ set(SRCS main.cpp
 )
 
 # for Ubuntu
-# qt_add_dbus_adaptor(SRCS org.freedesktop.Notifications.xml notificationserver.h NotificationServer)
+# qt_add_dbus_adaptor(SRCS org.freedesktop.Notifications.xml notificationsserver.h NotificationServer)
 
 qt6_add_dbus_adaptor(DBUS_SOURCES com.cutefish.Notification.xml application.h Application)
 set_source_files_properties(${DBUS_SOURCES} PROPERTIES SKIP_AUTOGEN ON)

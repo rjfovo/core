@@ -108,7 +108,7 @@ static void setEnvironmentVariable(const QByteArray &name, const QByteArray &val
 }
 
 Application::Application(int &argc, char **argv)
-    : QApplication(argc, argv)
+    : QGuiApplication(argc, argv)
     , m_processManager(new ProcessManager(this))
     , m_networkProxyManager(new NetworkProxyManager)
     , m_wayland(false)

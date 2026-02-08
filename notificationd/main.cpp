@@ -20,6 +20,7 @@
 #include "application.h"
 
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include "notificationsmodel.h"
 #include "screenhelper.h"
 
@@ -29,5 +30,9 @@ int main(int argc, char *argv[])
     // QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling, true);
 
     Application a(argc, argv);
+    
+    // Register QML types
+    qmlRegisterType<ScreenHelper>("cutefish.Notification", 1, 0, "ScreenHelper");
+    
     return a.run();
 }

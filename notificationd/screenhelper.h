@@ -23,10 +23,12 @@
 #include <QObject>
 #include <QRect>
 #include <QScreen>
+#include <QtQml/qqmlregistration.h>
 
 class ScreenHelper : public QObject
 {
     Q_OBJECT
+    QML_ELEMENT
     Q_PROPERTY(QRect screenGeometry READ screenGeometry NOTIFY screenGeometryChanged)
     Q_PROPERTY(QRect availableScreenRect READ availableScreenRect NOTIFY availableScreenRectChanged)
 

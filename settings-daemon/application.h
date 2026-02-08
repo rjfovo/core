@@ -20,7 +20,7 @@
 #ifndef APPLICATION_H
 #define APPLICATION_H
 
-#include <QApplication>
+#include <QGuiApplication>
 #include "theme/thememanager.h"
 #include "brightness/brightnessmanager.h"
 #include "battery/upowermanager.h"
@@ -31,7 +31,7 @@
 
 #include <QTimer>
 
-class Application : public QApplication
+class Application : public QGuiApplication
 {
     Q_OBJECT
 

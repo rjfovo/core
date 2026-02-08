@@ -24,7 +24,7 @@ import QtQuick.Layouts 6.0
 import QtQuick.Window 6.0
 import Qt5Compat.GraphicalEffects 6.0
 import FishUI 1.0 as FishUI
-import cutefish.Notification 1.0
+import Cutefish.Notification 1.0
 
 Item {
     id: control

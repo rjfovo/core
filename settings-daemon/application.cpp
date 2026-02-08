@@ -37,7 +37,7 @@
 #include <stdlib.h>
 
 Application::Application(int &argc, char **argv)
-    : QApplication(argc, argv)
+    : QGuiApplication(argc, argv)
     , m_themeManager(ThemeManager::self())
     , m_brightnessManager(new BrightnessManager(this))
     , m_upowerManager(new UPowerManager(this))
@@ -62,9 +62,9 @@ Application::Application(int &argc, char **argv)
     QLocale locale;
     QString qmFilePath = QString("%1/%2.qm").arg("/usr/share/cutefish-settings-daemon/translations/").arg(locale.name());
     if (QFile::exists(qmFilePath)) {
-        QTranslator *translator = new QTranslator(QApplication::instance());
+        QTranslator *translator = new QTranslator(QGuiApplication::instance());
         if (translator->load(qmFilePath)) {
-            QApplication::installTranslator(translator);
+            QGuiApplication::installTranslator(translator);
         } else {
             translator->deleteLater();
         }

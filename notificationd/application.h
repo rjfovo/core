@@ -20,13 +20,13 @@
 #ifndef APPLICATION_H
 #define APPLICATION_H
 
-#include <QApplication>
+#include <QGuiApplication>
 #include "notificationwindow.h"
 #include "settings.h"
 
 class NotificationServer;
 class NotificationsModel;
-class Application : public QApplication
+class Application : public QGuiApplication
 {
     Q_OBJECT
     Q_PROPERTY(bool doNotDisturb READ doNotDisturb WRITE setDoNotDisturb NOTIFY doNotDisturbChanged)
