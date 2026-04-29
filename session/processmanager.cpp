@@ -247,7 +247,10 @@ void ProcessManager::startDesktopProcess()
     list << qMakePair(QString("cutefish-dock"), QStringList());
     list << qMakePair(QString("cutefish-powerman"), QStringList());
     list << qMakePair(QString("cutefish-clipboard"), QStringList());
-    list << qMakePair(QString("cutefish-filemanager"), QStringList() << "-d");
+    // Always start desktop background service
+    list << qMakePair(QString("cutefish-desktop-background"), QStringList());
+    // File manager (started on demand, no longer runs in desktop mode)
+    // Desktop background is now handled by cutefish-desktop-background
 
     // For CutefishOS.
     if (QFile("/usr/bin/cutefish-welcome").exists() &&
